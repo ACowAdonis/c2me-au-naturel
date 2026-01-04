@@ -1,0 +1,95 @@
+package com.ishland.c2me.threading.worldgen.mixin;
+
+import com.ishland.c2me.base.common.GlobalExecutors;
+import com.ishland.c2me.base.common.scheduler.ThreadLocalWorldGenSchedulingState;
+import com.ishland.c2me.threading.worldgen.common.Config;
+import com.llamalad7.mixinextras.sugar.Local;
+import com.mojang.datafixers.util.Either;
+import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
+import net.minecraft.server.world.ChunkHolder;
+import net.minecraft.server.world.ThreadedAnvilChunkStorage;
+import net.minecraft.util.thread.ThreadExecutor;
+import net.minecraft.world.chunk.Chunk;
+import net.minecraft.world.chunk.ChunkStatus;
+import org.jetbrains.annotations.Nullable;
+import org.spongepowered.asm.mixin.Dynamic;
+import org.spongepowered.asm.mixin.Final;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Overwrite;
+import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.Redirect;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.IntFunction;
+
+@Mixin(ThreadedAnvilChunkStorage.class)
+public abstract class MixinThreadedAnvilChunkStorage {
+
+    @Shadow
+    @Nullable
+    protected abstract ChunkHolder getChunkHolder(long pos);
+
+    @Shadow @Final private ThreadExecutor<Runnable> mainThreadExecutor;
+
+    @Shadow private volatile Long2ObjectLinkedOpenHashMap<ChunkHolder> chunkHolders;
+
+    @Shadow protected abstract CompletableFuture<Either<List<Chunk>, ChunkHolder.Unloaded>> getRegion(ChunkHolder chunkHolder, int margin, IntFunction<ChunkStatus> distanceToStatus);
+
+    /**
+     * @author ishland
+     * @reason reduce scheduling overhead
+     */
+    @SuppressWarnings("OverwriteTarget")
+    @Dynamic
+    @Overwrite
+    private void method_17259(ChunkHolder chunkHolder, Runnable runnable) { // synthetic method for worldGenExecutor scheduling in upgradeChunk
+        runnable.run();
+    }
+
+    @Dynamic
+    @Inject(method = {"method_17225", "lambda$scheduleChunkGeneration$27"}, at = @At("HEAD"))
+    private void captureUpgradingChunkHolder(CallbackInfoReturnable<CompletableFuture<Either<Chunk, ChunkHolder.Unloaded>>> cir, @Local(argsOnly = true) ChunkHolder chunkHolder) {
+        ThreadLocalWorldGenSchedulingState.setChunkHolder(chunkHolder);
+    }
+
+    @Dynamic
+    @Inject(method = {"method_17225", "lambda$scheduleChunkGeneration$27"}, at = @At("RETURN"))
+    private void resetUpgradingChunkHolder(CallbackInfoReturnable<CompletableFuture<Either<Chunk, ChunkHolder.Unloaded>>> cir) {
+        ThreadLocalWorldGenSchedulingState.clearChunkHolder();
+    }
+
+    @Dynamic
+    @Inject(method = {"method_17225", "lambda$scheduleChunkGeneration$27"}, at = @At(value = "INVOKE", target = "Lnet/minecraft/util/crash/CrashReport;create(Ljava/lang/Throwable;Ljava/lang/String;)Lnet/minecraft/util/crash/CrashReport;", shift = At.Shift.BEFORE))
+    private void resetUpgradingChunkHolderExceptionally(CallbackInfoReturnable<CompletableFuture<Either<Chunk, ChunkHolder.Unloaded>>> cir) {
+        ThreadLocalWorldGenSchedulingState.clearChunkHolder();
+    }
+
+    /**
+     * C2ME fix: The original redirect waited for the center chunk to be at the target status
+     * before getting the region, but this creates a circular dependency since we're IN the
+     * upgrade process to reach that status. This causes a deadlock where:
+     * 1. upgradeChunk needs the region to proceed
+     * 2. getRegion waits for chunk to be at target status
+     * 3. But we can't reach target status without completing upgradeChunk
+     *
+     * The fix removes the wait and just gets the region directly, while still applying
+     * the async scheduling optimization for the composition step.
+     */
+    @Redirect(method = "upgradeChunk", at = @At(value = "INVOKE", target = "Lnet/minecraft/server/world/ThreadedAnvilChunkStorage;getRegion(Lnet/minecraft/server/world/ChunkHolder;ILjava/util/function/IntFunction;)Ljava/util/concurrent/CompletableFuture;"))
+    private CompletableFuture<Either<List<Chunk>, ChunkHolder.Unloaded>> redirectGetRegion(ThreadedAnvilChunkStorage instance, ChunkHolder chunkHolder, int margin, IntFunction<ChunkStatus> distanceToStatus) {
+        if (instance != (Object) this) throw new IllegalStateException();
+        // C2ME fix: Don't wait for target status - just get the region directly
+        // This avoids the circular dependency deadlock while maintaining the thread-safe chunk holder access
+        return this.getRegion(chunkHolder, margin, distanceToStatus);
+    }
+
+    @Redirect(method = "getRegion", at = @At(value = "INVOKE", target = "Lnet/minecraft/server/world/ThreadedAnvilChunkStorage;getCurrentChunkHolder(J)Lnet/minecraft/server/world/ChunkHolder;"))
+    private ChunkHolder redirectGetChunkHolder(ThreadedAnvilChunkStorage instance, long pos) {
+        return this.chunkHolders.get(pos); // thread-safe
+    }
+
+}

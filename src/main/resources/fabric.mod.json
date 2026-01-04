@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "id": "c2me",
+  "version": "${version}",
+  "name": "Concurrent Chunk Management Engine",
+  "description": "A Fabric mod designed to improve the chunk performance of Minecraft.",
+  "authors": [
+    "RelativityMC",
+    "ishland"
+  ],
+  "contact": {
+    "sources": "https://github.com/RelativityMC/C2ME-fabric",
+    "issues": "https://github.com/RelativityMC/C2ME-fabric/issues",
+    "discord": "https://discord.io/ishlandbukkit",
+    "homepage": "https://modrinth.com/mod/c2me-fabric"
+  },
+  "license": "MIT",
+  "icon": "assets/c2me/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "com.ishland.c2me.C2MEMod"
+    ],
+    "preLaunch": [
+      "com.ishland.c2me.PreLaunchHandler"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.14.25",
+    "java": ">=17",
+    "minecraft": ">=1.20-rc.1",
+    "c2me-base": "*"
+  },
+  "conflicts": {
+    "dynview": "*",
+    "betterchunkloading": "*"
+  },
+  "breaks": {
+    "tic_tacs": "*",
+    "optifabric": "*"
+  },
+
+  "custom": {
+    "_lithium_toggle_comment": "We disable the player_chunk_tick mixin as some weird incompatibility is present, you are free to remove this and test the incompatibility issue",
+    "lithium:options": {
+      "mixin.world.player_chunk_tick": false
+    }
+  }
+}
