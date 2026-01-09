@@ -60,8 +60,7 @@ public class AsyncCombinedLock {
                 }
             });
         } else {
-            // Reset to PENDING to allow retry
-            state.set(State.PENDING);
+            // Keep state as ACQUIRING during cleanup to prevent race conditions
 
             boolean triedRelock = false;
             for (LockEntry entry : tryLocks) {
@@ -70,6 +69,7 @@ public class AsyncCombinedLock {
                 if (!triedRelock && entry.lockToken.isEmpty()) {
                     this.lock.acquireLock(entry.name).thenCompose(lockToken -> {
                         lockToken.releaseLock();
+                        state.set(State.PENDING);  // Reset state right before retry
                         return CompletableFuture.runAsync(this::tryAcquire, GlobalExecutors.executor);
                     });
                     triedRelock = true;
@@ -78,6 +78,7 @@ public class AsyncCombinedLock {
             if (!triedRelock) {
                 // shouldn't happen at all...
                 LOGGER.warn("Some issue occurred while doing locking, retrying");
+                state.set(State.PENDING);  // Reset state right before retry
                 this.tryAcquire();
             }
         }

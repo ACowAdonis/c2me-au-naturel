@@ -90,8 +90,7 @@ public class SchedulingAsyncCombinedLock<T> implements ScheduledTask {
             };
             return true;
         } else {
-            // Reset to PENDING to allow retry
-            state.set(State.PENDING);
+            // Keep state as ACQUIRING during cleanup to prevent race conditions
 
             boolean triedRelock = false;
             for (LockEntry entry : tryLocks) {
@@ -107,6 +106,7 @@ public class SchedulingAsyncCombinedLock<T> implements ScheduledTask {
                             LOGGER.warn("Lock acquisition for chunk {} took {} ms for task '{}'. This may indicate lock contention or a deadlock.", lockName, lockAcquireTime, this.desc);
                         }
                         lockToken.releaseLock();
+                        state.set(State.PENDING);  // Reset state right before retry
                         this.readdForExecution.accept(this);
                     });
                     triedRelock = true;
@@ -115,6 +115,7 @@ public class SchedulingAsyncCombinedLock<T> implements ScheduledTask {
             if (!triedRelock) {
                 // shouldn't happen at all...
                 LOGGER.warn("Some issue occurred while doing locking, retrying");
+                state.set(State.PENDING);  // Reset state right before retry
                 return this.tryAcquire();
             }
             return false;
