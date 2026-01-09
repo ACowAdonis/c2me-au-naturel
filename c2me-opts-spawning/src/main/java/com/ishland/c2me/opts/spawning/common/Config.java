@@ -8,6 +8,12 @@ import java.util.Set;
 
 public class Config {
 
+    // Default to empty - users can add entries to avoid entity instantiation overhead
+    // during worldgen for mobs they don't want in their modpack
+    public static final List<String> DEFAULT_SPAWN_BLACKLIST = List.of();
+
+    /*
+    // Example blacklist for modpacks wanting to exclude specific mobs:
     public static final List<String> DEFAULT_SPAWN_BLACKLIST = List.of(
             "alexscaves:atlatitan",
             "alexscaves:beholder_eye",
@@ -356,6 +362,7 @@ public class Config {
             "wizard_animals_plus:whale_orca",
             "wizard_animals_plus:worm"
     );
+    */
 
     public static final List<String> spawnBlacklist = new ConfigSystem.ConfigAccessor()
             .key("spawning.spawnBlacklist")
