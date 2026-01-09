@@ -104,13 +104,11 @@ public class SchedulingManager {
     }
 
     private void updateSyncLoadInternal(ChunkPos pos) {
-        long startTime = System.nanoTime();
         for (int xOff = -8; xOff <= 8; xOff++) {
             for (int zOff = -8; zOff <= 8; zOff++) {
                 updatePriorityInternal(ChunkPos.toLong(pos.x + xOff, pos.z + zOff));
             }
         }
-        long endTime = System.nanoTime();
     }
 
     private void scheduleExecution() {

@@ -156,7 +156,7 @@ public class C2MEStorageThread extends Thread {
         final CompletableFuture<NbtCompound> future = new CompletableFuture<>();
         if (this.closing.get()) {
             future.completeExceptionally(new CancellationException());
-            return future.thenApply(Function.identity());
+            return future;
         }
 
         // C2ME fix: Check queue size and warn about potential memory issues
@@ -180,8 +180,7 @@ public class C2MEStorageThread extends Thread {
             }
             return null;
         });
-        return future
-                .thenApply(Function.identity());
+        return future;
     }
 
     public void setChunkData(long pos, @Nullable NbtCompound nbt) {
@@ -245,7 +244,7 @@ public class C2MEStorageThread extends Thread {
     public CompletableFuture<Void> close() {
         this.closing.set(true);
         this.wakeUp();
-        return this.closeFuture.thenApply(Function.identity());
+        return this.closeFuture;
     }
 
     private boolean handleTasks() {

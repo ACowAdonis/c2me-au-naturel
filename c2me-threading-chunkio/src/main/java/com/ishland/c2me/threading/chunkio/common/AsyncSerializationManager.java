@@ -22,6 +22,7 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 
 public class AsyncSerializationManager {
 
@@ -100,6 +101,40 @@ public class AsyncSerializationManager {
      */
     public static int getScopeDepth() {
         return scopeHolder.get().size();
+    }
+
+    /**
+     * C2ME fix: Helper method to safely execute code within a scope with guaranteed cleanup.
+     * This prevents ThreadLocal leaks by ensuring pop() is always called, even if exceptions occur.
+     *
+     * @param scope the scope to use
+     * @param operation the operation to execute within the scope
+     * @return the result of the operation
+     * @param <T> the return type
+     */
+    public static <T> T withScope(Scope scope, Supplier<T> operation) {
+        push(scope);
+        try {
+            return operation.get();
+        } finally {
+            pop(scope);
+        }
+    }
+
+    /**
+     * C2ME fix: Helper method to safely execute code within a scope with guaranteed cleanup (void version).
+     * This prevents ThreadLocal leaks by ensuring pop() is always called, even if exceptions occur.
+     *
+     * @param scope the scope to use
+     * @param operation the operation to execute within the scope
+     */
+    public static void withScopeVoid(Scope scope, Runnable operation) {
+        push(scope);
+        try {
+            operation.run();
+        } finally {
+            pop(scope);
+        }
     }
 
     public static class Scope {

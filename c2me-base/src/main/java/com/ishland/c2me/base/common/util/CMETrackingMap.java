@@ -11,8 +11,6 @@ public class CMETrackingMap<K, V> implements Map<K, V> {
 
     private final Map<K, V> wrapped;
 
-    private volatile Throwable throwable = new Throwable();
-
     public CMETrackingMap(Map<K, V> wrapped) {
         this.wrapped = wrapped;
     }
@@ -45,25 +43,21 @@ public class CMETrackingMap<K, V> implements Map<K, V> {
     @Nullable
     @Override
     public V put(K key, V value) {
-        this.throwable = new Throwable();
         return this.wrapped.put(key, value);
     }
 
     @Override
     public V remove(Object key) {
-        this.throwable = new Throwable();
         return this.wrapped.remove(key);
     }
 
     @Override
     public void putAll(@NotNull Map<? extends K, ? extends V> m) {
-        this.throwable = new Throwable();
         this.wrapped.putAll(m);
     }
 
     @Override
     public void clear() {
-        this.throwable = new Throwable();
         this.wrapped.clear();
     }
 

@@ -2,12 +2,16 @@ package com.ishland.c2me.base.common.scheduler;
 
 import com.google.common.base.Preconditions;
 import com.ishland.c2me.base.common.GlobalExecutors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
 public class NeighborLockingTask<T> implements ScheduledTask {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger("C2ME/NeighborLockingTask");
 
     private final SchedulingManager schedulingManager;
     private final long center;
@@ -64,7 +68,7 @@ public class NeighborLockingTask<T> implements ScheduledTask {
             try {
                 postAction.run();
             } catch (Throwable t) {
-                t.printStackTrace();
+                LOGGER.error("Error running post action", t);
             }
             if (throwable != null) this.future.completeExceptionally(throwable);
             else this.future.complete(result);

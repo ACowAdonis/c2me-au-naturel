@@ -5,6 +5,8 @@ import com.ibm.asyncutil.locks.AsyncLock;
 import com.ibm.asyncutil.locks.AsyncNamedLock;
 import com.ishland.c2me.base.common.GlobalExecutors;
 import net.minecraft.util.math.ChunkPos;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Optional;
 import java.util.Set;
@@ -15,6 +17,8 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 
 public class SchedulingAsyncCombinedLock<T> implements ScheduledTask {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger("C2ME/SchedulingAsyncCombinedLock");
 
     private final AsyncNamedLock<ChunkPos> lock;
     private final long center;
@@ -83,7 +87,7 @@ public class SchedulingAsyncCombinedLock<T> implements ScheduledTask {
                     this.lock.acquireLock(entry.name).thenAccept(lockToken -> {
                         final long lockAcquireTime = System.currentTimeMillis() - lockAcquireStartTime;
                         if (lockAcquireTime > 5000) {
-                            System.err.println(String.format("Lock acquisition for chunk %s took %d ms for task '%s'. This may indicate lock contention or a deadlock.", lockName, lockAcquireTime, this.desc));
+                            LOGGER.warn("Lock acquisition for chunk {} took {} ms for task '{}'. This may indicate lock contention or a deadlock.", lockName, lockAcquireTime, this.desc);
                         }
                         lockToken.releaseLock();
                         this.readdForExecution.accept(this);
@@ -93,7 +97,7 @@ public class SchedulingAsyncCombinedLock<T> implements ScheduledTask {
             }
             if (!triedRelock) {
                 // shouldn't happen at all...
-                System.err.println("Some issue occurred while doing locking, retrying");
+                LOGGER.warn("Some issue occurred while doing locking, retrying");
                 return this.tryAcquire();
             }
             return false;
@@ -111,12 +115,12 @@ public class SchedulingAsyncCombinedLock<T> implements ScheduledTask {
             try {
                 token.releaseLock();
             } catch (Throwable t) {
-                t.printStackTrace();
+                LOGGER.error("Error releasing lock token", t);
             }
             try {
                 postAction.run();
             } catch (Throwable t) {
-                t.printStackTrace();
+                LOGGER.error("Error running post action", t);
             }
             if (throwable != null) this.future.completeExceptionally(throwable);
             else this.future.complete(result);
@@ -135,7 +139,7 @@ public class SchedulingAsyncCombinedLock<T> implements ScheduledTask {
     }
 
     public CompletableFuture<T> getFuture() {
-        return this.future.thenApply(Function.identity());
+        return this.future;
     }
 
     private record LockEntry(ChunkPos name,

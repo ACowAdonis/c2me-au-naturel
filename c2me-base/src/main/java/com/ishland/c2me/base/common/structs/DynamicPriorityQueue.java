@@ -3,6 +3,7 @@ package com.ishland.c2me.base.common.structs;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectLinkedOpenHashSet;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * A priority queue with fixed number of priorities and allows changing priorities of elements.
@@ -52,6 +53,7 @@ public class DynamicPriorityQueue<E> {
         if (priority < currentMinPriority) currentMinPriority = priority;
     }
 
+    @Nullable
     public E dequeue() {
         while (currentMinPriority < priorities.length) {
             ObjectLinkedOpenHashSet<E> priority = this.priorities[currentMinPriority];

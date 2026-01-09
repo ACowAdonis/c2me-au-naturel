@@ -39,6 +39,8 @@ import it.unimi.dsi.fastutil.objects.Object2ReferenceOpenHashMap;
 import net.fabricmc.loader.api.FabricLoader;
 import org.jetbrains.annotations.Nullable;
 import org.objectweb.asm.tree.ClassNode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.spongepowered.asm.mixin.extensibility.IMixinInfo;
 import org.spongepowered.asm.mixin.transformer.ClassInfo;
 import org.spongepowered.asm.service.MixinService;
@@ -61,6 +63,8 @@ import java.util.regex.*;
  * @author Michael Schierl
  */
 public class SMAPSourceDebugExtension {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger("C2ME/SMAPSourceDebugExtension");
 
     /**
      * Enhance a stack trace with information from source debug extensions.
@@ -142,7 +146,8 @@ public class SMAPSourceDebugExtension {
                     if (classNode != null) {
                         value = classNode.sourceDebug;
                     }
-                } catch (Exception ignored) {
+                } catch (Exception e) {
+                    LOGGER.trace("Failed to get class node for {}", className, e);
                 }
             }
             if (value != null) {

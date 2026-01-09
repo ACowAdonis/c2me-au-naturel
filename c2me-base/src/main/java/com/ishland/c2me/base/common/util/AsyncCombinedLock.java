@@ -4,6 +4,8 @@ import com.ibm.asyncutil.locks.AsyncLock;
 import com.ibm.asyncutil.locks.AsyncNamedLock;
 import com.ishland.c2me.base.common.GlobalExecutors;
 import net.minecraft.util.math.ChunkPos;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Optional;
 import java.util.Set;
@@ -11,6 +13,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
 
 public class AsyncCombinedLock {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger("C2ME/AsyncCombinedLock");
 
     private final AsyncNamedLock<ChunkPos> lock;
     private final ChunkPos[] names;
@@ -56,14 +60,14 @@ public class AsyncCombinedLock {
             }
             if (!triedRelock) {
                 // shouldn't happen at all...
-                System.err.println("Some issue occurred while doing locking, retrying");
+                LOGGER.warn("Some issue occurred while doing locking, retrying");
                 this.tryAcquire();
             }
         }
     }
 
     public CompletableFuture<AsyncLock.LockToken> getFuture() {
-        return future.thenApply(Function.identity());
+        return future;
     }
 
     private record LockEntry(ChunkPos name,
