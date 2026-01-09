@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -19,6 +20,12 @@ import java.util.function.Supplier;
 public class SchedulingAsyncCombinedLock<T> implements ScheduledTask {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("C2ME/SchedulingAsyncCombinedLock");
+
+    private enum State {
+        PENDING,    // Initial state, ready to acquire
+        ACQUIRING,  // Currently attempting to acquire locks
+        COMPLETED   // Acquisition completed (success or failure)
+    }
 
     private final AsyncNamedLock<ChunkPos> lock;
     private final long center;
@@ -29,6 +36,7 @@ public class SchedulingAsyncCombinedLock<T> implements ScheduledTask {
     private final String desc;
     private final CompletableFuture<T> future = new CompletableFuture<>();
     private final boolean async;
+    private final AtomicReference<State> state = new AtomicReference<>(State.PENDING);
     private AsyncLock.LockToken acquiredToken;
 
     public SchedulingAsyncCombinedLock(AsyncNamedLock<ChunkPos> lock, long center, Set<ChunkPos> names, BooleanSupplier isCancelled, Consumer<SchedulingAsyncCombinedLock<T>> readdForExecution, Supplier<CompletableFuture<T>> action, String desc, boolean async) {
@@ -49,7 +57,12 @@ public class SchedulingAsyncCombinedLock<T> implements ScheduledTask {
         return tryAcquire();
     }
 
-    synchronized boolean tryAcquire() {
+    boolean tryAcquire() {
+        // Lock-free state machine: use CAS to ensure only one thread enters acquisition logic
+        if (!state.compareAndSet(State.PENDING, State.ACQUIRING)) {
+            return false; // Already being acquired by another thread
+        }
+
 //        if (this.isCancelled.getAsBoolean()) {
 ////            System.out.println(String.format("Cancelling tasks for %s", this.desc));
 //            this.future.completeExceptionally(new CancellationException());
@@ -68,6 +81,7 @@ public class SchedulingAsyncCombinedLock<T> implements ScheduledTask {
             }
         }
         if (allAcquired) {
+            state.set(State.COMPLETED);
             this.acquiredToken = () -> {
                 for (LockEntry entry : tryLocks) {
                     //noinspection OptionalGetWithoutIsPresent
@@ -76,6 +90,9 @@ public class SchedulingAsyncCombinedLock<T> implements ScheduledTask {
             };
             return true;
         } else {
+            // Reset to PENDING to allow retry
+            state.set(State.PENDING);
+
             boolean triedRelock = false;
             for (LockEntry entry : tryLocks) {
                 if (entry == null) continue;

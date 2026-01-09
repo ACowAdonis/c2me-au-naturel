@@ -10,15 +10,23 @@ import org.slf4j.LoggerFactory;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
 public class AsyncCombinedLock {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("C2ME/AsyncCombinedLock");
 
+    private enum State {
+        PENDING,    // Initial state, ready to acquire
+        ACQUIRING,  // Currently attempting to acquire locks
+        COMPLETED   // Acquisition completed (success or failure)
+    }
+
     private final AsyncNamedLock<ChunkPos> lock;
     private final ChunkPos[] names;
     private final CompletableFuture<AsyncLock.LockToken> future = new CompletableFuture<>();
+    private final AtomicReference<State> state = new AtomicReference<>(State.PENDING);
 
     public AsyncCombinedLock(AsyncNamedLock<ChunkPos> lock, Set<ChunkPos> names) {
         this.lock = lock;
@@ -26,7 +34,12 @@ public class AsyncCombinedLock {
         this.tryAcquire();
     }
 
-    private synchronized void tryAcquire() { // TODO optimize logic further
+    private void tryAcquire() {
+        // Lock-free state machine: use CAS to ensure only one thread enters acquisition logic
+        if (!state.compareAndSet(State.PENDING, State.ACQUIRING)) {
+            return; // Already being acquired by another thread
+        }
+
         final LockEntry[] tryLocks = new LockEntry[names.length];
         boolean allAcquired = true;
         for (int i = 0, namesLength = names.length; i < namesLength; i++) {
@@ -39,6 +52,7 @@ public class AsyncCombinedLock {
             }
         }
         if (allAcquired) {
+            state.set(State.COMPLETED);
             future.complete(() -> {
                 for (LockEntry entry : tryLocks) {
                     //noinspection OptionalGetWithoutIsPresent
@@ -46,6 +60,9 @@ public class AsyncCombinedLock {
                 }
             });
         } else {
+            // Reset to PENDING to allow retry
+            state.set(State.PENDING);
+
             boolean triedRelock = false;
             for (LockEntry entry : tryLocks) {
                 if (entry == null) continue;
