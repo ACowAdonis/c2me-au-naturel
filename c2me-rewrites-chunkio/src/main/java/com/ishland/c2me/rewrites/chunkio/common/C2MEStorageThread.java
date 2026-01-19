@@ -290,11 +290,10 @@ public class C2MEStorageThread extends Thread {
             final long pos = readRequest.pos;
             final CompletableFuture<NbtCompound> future = readRequest.future;
             final NbtScanner scanner = readRequest.scanner;
-            if (this.cache.containsKey(pos)) {
-                final Either<NbtCompound, byte[]> cached = this.cache.get(pos);
-                if (cached == null) {
-                    future.complete(null);
-                } else if (cached.left().isPresent()) {
+            // Single lookup optimization: get first, then only check containsKey for null case
+            final Either<NbtCompound, byte[]> cached = this.cache.get(pos);
+            if (cached != null) {
+                if (cached.left().isPresent()) {
                     if (scanner != null) {
                         GlobalExecutors.executor.execute(() -> {
                             try {
@@ -329,6 +328,10 @@ public class C2MEStorageThread extends Thread {
                                 return null;
                             });
                 }
+                continue;
+            } else if (this.cache.containsKey(pos)) {
+                // Key exists but value is null - chunk is known to not exist
+                future.complete(null);
                 continue;
             }
             scheduleChunkRead(pos, future, scanner);

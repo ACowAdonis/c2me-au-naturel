@@ -7,7 +7,6 @@ import com.ishland.c2me.base.common.GlobalExecutors;
 import com.ishland.c2me.base.common.scheduler.NeighborLockingTask;
 import com.ishland.c2me.base.common.scheduler.SchedulingManager;
 import com.mojang.datafixers.util.Either;
-import it.unimi.dsi.fastutil.longs.LongArrayList;
 import net.minecraft.server.world.ChunkHolder;
 import net.minecraft.server.world.ChunkLevels;
 import net.minecraft.util.math.ChunkPos;
@@ -63,30 +62,18 @@ public class ChunkStatusUtils {
             isCancelled = FALSE_SUPPLIER;
         }
 
-//        ArrayList<ChunkPos> fetchedLocks = new ArrayList<>((2 * radius + 1) * (2 * radius + 1));
-//        for (int x = target.x - radius; x <= target.x + radius; x++)
-//            for (int z = target.z - radius; z <= target.z + radius; z++)
-//                fetchedLocks.add(new ChunkPos(x, z));
-//
-//        final SchedulingAsyncCombinedLock<T> task = new SchedulingAsyncCombinedLock<>(
-//                chunkLock,
-//                target.toLong(),
-//                new HashSet<>(fetchedLocks),
-//                isCancelled,
-//                schedulingManager::enqueue,
-//                action,
-//                target.toString(),
-//                async);
-
-        LongArrayList lockTargets = new LongArrayList((2 * radius + 1) * (2 * radius + 1));
+        // Direct array allocation to avoid intermediate list
+        final int diameter = 2 * radius + 1;
+        final long[] lockTargets = new long[diameter * diameter];
+        int idx = 0;
         for (int x = target.x - radius; x <= target.x + radius; x++)
             for (int z = target.z - radius; z <= target.z + radius; z++)
-                lockTargets.add(ChunkPos.toLong(x, z));
+                lockTargets[idx++] = ChunkPos.toLong(x, z);
 
         final NeighborLockingTask<T> task = new NeighborLockingTask<>(
                 schedulingManager,
                 target.toLong(),
-                lockTargets.toLongArray(),
+                lockTargets,
                 isCancelled,
                 action,
                 "%s %s".formatted(target.toString(), status.toString()),

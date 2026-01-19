@@ -25,6 +25,7 @@ public class DynamicPriorityQueue<E> {
         //noinspection unchecked
         this.priorities = new ObjectLinkedOpenHashSet[priorityCount];
         this.nonEmptyBuckets = new BitSet(priorityCount);
+        this.priorityMap.defaultReturnValue(-1); // Enable single-lookup optimization
         for (int i = 0; i < priorityCount; i++) {
             this.priorities[i] = new ObjectLinkedOpenHashSet<>();
         }
@@ -46,9 +47,10 @@ public class DynamicPriorityQueue<E> {
     public void changePriority(E element, int priority) {
         if (priority < 0 || priority >= priorities.length)
             throw new IllegalArgumentException("Priority out of range");
-        if (!priorityMap.containsKey(element)) return; // ignored
 
+        // Single lookup optimization: getInt returns -1 if not present
         int oldPriority = priorityMap.getInt(element);
+        if (oldPriority < 0) return; // not in queue, ignored
         if (oldPriority == priority) return; // nothing to do
 
         priorities[oldPriority].remove(element);
@@ -87,9 +89,9 @@ public class DynamicPriorityQueue<E> {
     }
 
     public void remove(E element) {
-        if (!priorityMap.containsKey(element))
-            return; // ignore
+        // Single lookup optimization: getInt returns -1 if not present
         int priority = priorityMap.getInt(element);
+        if (priority < 0) return; // not in queue, ignore
         priorities[priority].remove(element);
         if (priorities[priority].isEmpty()) {
             nonEmptyBuckets.clear(priority);
