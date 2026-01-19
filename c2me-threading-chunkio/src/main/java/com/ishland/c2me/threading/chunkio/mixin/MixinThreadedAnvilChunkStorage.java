@@ -335,8 +335,18 @@ public abstract class MixinThreadedAnvilChunkStorage extends VersionedChunkStora
                         return false;
                     }
 
-                    if (chunkStatus == ChunkStatus.EMPTY && chunk.getStructureStarts().values().stream().noneMatch(StructureStart::hasChildren)) {
-                        return false;
+                    if (chunkStatus == ChunkStatus.EMPTY) {
+                        // Avoid stream allocation - use traditional loop
+                        boolean hasChildren = false;
+                        for (StructureStart start : chunk.getStructureStarts().values()) {
+                            if (start.hasChildren()) {
+                                hasChildren = true;
+                                break;
+                            }
+                        }
+                        if (!hasChildren) {
+                            return false;
+                        }
                     }
                 }
 
