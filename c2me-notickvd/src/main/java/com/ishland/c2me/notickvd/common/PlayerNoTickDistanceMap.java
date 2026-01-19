@@ -123,8 +123,9 @@ public class PlayerNoTickDistanceMap extends ChunkPosDistanceLevelPropagator {
         this.distantChunkLoadFutures.removeIf(CompletableFuture::isDone);
 
         final int closeChunkThreshold = Config.closeChunkDistanceThreshold;
-        final int reservedSlots = Config.reservedCloseChunkSlots;
         final int maxTotal = Config.maxConcurrentChunkLoads;
+        // Clamp reserved slots to at most 50% of total to ensure distant chunks can still load
+        final int reservedSlots = Math.min(Config.reservedCloseChunkSlots, maxTotal / 2);
 
         // Slots available for distant chunks = total - reserved (but not below 0)
         final int maxDistantSlots = Math.max(0, maxTotal - reservedSlots);

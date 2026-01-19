@@ -18,12 +18,16 @@ public class Config {
                     " This helps prevent the 'hole' effect where distant chunks load before nearby ones.")
             .getLong(8, 8, ConfigSystem.LongChecks.POSITIVE_VALUES_ONLY);
 
+    // Default to ~25% of slots reserved for close chunks, minimum 2
+    private static final int DEFAULT_RESERVED_SLOTS = Math.max(2, maxConcurrentChunkLoads / 4);
+
     public static final int reservedCloseChunkSlots = (int) new ConfigSystem.ConfigAccessor()
             .key("noTickViewDistance.reservedCloseChunkSlots")
             .comment("Number of concurrent chunk load slots reserved exclusively for close chunks. \n" +
                     " These slots cannot be used by distant chunks, ensuring close chunks never starve. \n" +
-                    " Set to 0 to disable reserved slots (original behavior).")
-            .getLong(4, 4);
+                    " Set to 0 to disable reserved slots (original behavior). \n" +
+                    " Default is ~25%% of maxConcurrentChunkLoads (minimum 2).")
+            .getLong(DEFAULT_RESERVED_SLOTS, DEFAULT_RESERVED_SLOTS);
 
     public static final boolean compatibilityMode = new ConfigSystem.ConfigAccessor()
             .key("noTickViewDistance.compatibilityMode")
