@@ -129,10 +129,15 @@ public class C2MEStorageThread extends Thread {
 
     private boolean pollTasks() {
         boolean hasWork = false;
-        hasWork = handleTasks() || hasWork;
-        hasWork = handlePendingWrites() || hasWork;
+        // Process reads FIRST to prioritize chunk loading during active exploration
         hasWork = handlePendingReads() || hasWork;
-        hasWork = writeBacklog() || hasWork;
+        hasWork = handleTasks() || hasWork;
+        // Queue pending writes to cache/backlog
+        hasWork = handlePendingWrites() || hasWork;
+        // Only flush write backlog when no reads are waiting
+        if (pendingReadRequests.isEmpty()) {
+            hasWork = writeBacklog() || hasWork;
+        }
         return hasWork;
     }
 
@@ -331,14 +336,25 @@ public class C2MEStorageThread extends Thread {
         return hasWork;
     }
 
+    // Maximum chunks to write per poll cycle when no reads are pending
+    private static final int MAX_WRITES_PER_CYCLE = 8;
+
     private boolean writeBacklog() {
-        if (!this.writeBacklog.isEmpty()) {
+        if (this.writeBacklog.isEmpty()) {
+            return false;
+        }
+
+        // Batch write multiple chunks when no reads are waiting
+        // This improves write throughput during quiet periods while
+        // still yielding to reads during active exploration
+        int written = 0;
+        while (!this.writeBacklog.isEmpty() && written < MAX_WRITES_PER_CYCLE) {
             final long pos = this.writeBacklog.firstLongKey();
             final Either<NbtCompound, byte[]> nbt = this.writeBacklog.removeFirst();
             writeChunk(pos, nbt);
-            return true;
+            written++;
         }
-        return false;
+        return true;
     }
 
     private void runWriteFutureGC() {

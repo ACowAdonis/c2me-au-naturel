@@ -32,7 +32,9 @@ public class PlayerNoTickDistanceMap extends ChunkPosDistanceLevelPropagator {
     private final DynamicPriorityQueue<ChunkPos> pendingTicketAdds = new DynamicPriorityQueue<>(251);
     private final LongOpenHashSet pendingTicketRemoves = new LongOpenHashSet();
     private final LongOpenHashSet managedChunkTickets = new LongOpenHashSet();
-    private final ReferenceArrayList<CompletableFuture<Void>> chunkLoadFutures = new ReferenceArrayList<>();
+    // Split futures into close and distant pools for priority-based slot reservation
+    private final ReferenceArrayList<CompletableFuture<Void>> closeChunkLoadFutures = new ReferenceArrayList<>();
+    private final ReferenceArrayList<CompletableFuture<Void>> distantChunkLoadFutures = new ReferenceArrayList<>();
 
     private final ChunkTicketManager chunkTicketManager;
     private final NoTickSystem noTickSystem;
@@ -116,16 +118,49 @@ public class PlayerNoTickDistanceMap extends ChunkPosDistanceLevelPropagator {
             pendingTicketRemoves.clear();
         }
 
-        // clean up futures
-        this.chunkLoadFutures.removeIf(CompletableFuture::isDone);
+        // clean up futures from both pools
+        this.closeChunkLoadFutures.removeIf(CompletableFuture::isDone);
+        this.distantChunkLoadFutures.removeIf(CompletableFuture::isDone);
 
-        // add new tickets
-        while (this.chunkLoadFutures.size() < Config.maxConcurrentChunkLoads) {
+        final int closeChunkThreshold = Config.closeChunkDistanceThreshold;
+        final int reservedSlots = Config.reservedCloseChunkSlots;
+        final int maxTotal = Config.maxConcurrentChunkLoads;
+
+        // Slots available for distant chunks = total - reserved (but not below 0)
+        final int maxDistantSlots = Math.max(0, maxTotal - reservedSlots);
+
+        // add new tickets with priority for close chunks
+        while (true) {
+            final int currentCloseCount = this.closeChunkLoadFutures.size();
+            final int currentDistantCount = this.distantChunkLoadFutures.size();
+            final int currentTotal = currentCloseCount + currentDistantCount;
+
+            if (currentTotal >= maxTotal) {
+                // No more slots available at all
+                break;
+            }
+
             final ChunkPos pos = this.pendingTicketAdds.dequeue();
             if (pos == null) break;
+
+            final int distance = this.distanceFromNearestPlayer.get(pos.toLong());
+            final boolean isCloseChunk = distance <= closeChunkThreshold;
+
+            if (!isCloseChunk && currentDistantCount >= maxDistantSlots) {
+                // Distant chunk but no slots available for distant chunks
+                // (reserved slots are for close chunks only)
+                // Skip this chunk for now - close chunks will be processed first
+                // due to priority queue ordering, so we continue to find close chunks
+                continue;
+            }
+
             if (this.managedChunkTickets.add(pos.toLong())) {
-                final CompletableFuture<Void> ticketFuture = this.addTicket0(pos);
-                this.chunkLoadFutures.add(getChunkLoadFuture(tacs, pos, ticketFuture));
+                final CompletableFuture<Void> loadFuture = getChunkLoadFuture(tacs, pos, isCloseChunk);
+                if (isCloseChunk) {
+                    this.closeChunkLoadFutures.add(loadFuture);
+                } else {
+                    this.distantChunkLoadFutures.add(loadFuture);
+                }
                 hasUpdates = true;
             }
         }
@@ -142,7 +177,8 @@ public class PlayerNoTickDistanceMap extends ChunkPosDistanceLevelPropagator {
         return CompletableFuture.runAsync(() -> this.chunkTicketManager.addTicketWithLevel(TICKET_TYPE, pos, 33, pos), this.noTickSystem.mainBeforeTicketTicks::add);
     }
 
-    private CompletableFuture<Void> getChunkLoadFuture(ThreadedAnvilChunkStorage tacs, ChunkPos pos, CompletableFuture<Void> ticketFuture) {
+    private CompletableFuture<Void> getChunkLoadFuture(ThreadedAnvilChunkStorage tacs, ChunkPos pos, boolean isCloseChunk) {
+        final CompletableFuture<Void> ticketFuture = this.addTicket0(pos);
         final CompletableFuture<Void> future = ticketFuture.thenComposeAsync(unused -> {
             final ChunkHolder holder = ((IThreadedAnvilChunkStorage) tacs).getCurrentChunkHolders().get(pos.toLong());
             if (holder == null) {
@@ -153,7 +189,12 @@ public class PlayerNoTickDistanceMap extends ChunkPosDistanceLevelPropagator {
             }
         }, this.noTickSystem.mainAfterTicketTicks::add);
         future.thenRunAsync(() -> {
-            this.chunkLoadFutures.remove(future);
+            // Remove from the appropriate pool
+            if (isCloseChunk) {
+                this.closeChunkLoadFutures.remove(future);
+            } else {
+                this.distantChunkLoadFutures.remove(future);
+            }
             final boolean hasUpdates = this.runPendingTicketUpdatesInternal(tacs);
             if (hasUpdates) {
                 hasPendingTicketUpdatesAsync = true;

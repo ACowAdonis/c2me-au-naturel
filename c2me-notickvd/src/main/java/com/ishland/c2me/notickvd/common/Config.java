@@ -11,6 +11,20 @@ public class Config {
                     " Lower this for a better latency and higher this for a faster loading")
             .getLong(GlobalExecutors.GLOBAL_EXECUTOR_PARALLELISM + 1, GlobalExecutors.GLOBAL_EXECUTOR_PARALLELISM + 1, ConfigSystem.LongChecks.POSITIVE_VALUES_ONLY);
 
+    public static final int closeChunkDistanceThreshold = (int) new ConfigSystem.ConfigAccessor()
+            .key("noTickViewDistance.closeChunkDistanceThreshold")
+            .comment("Chunks within this distance from the player are considered 'close' \n" +
+                    " and will be prioritized with reserved loading slots. \n" +
+                    " This helps prevent the 'hole' effect where distant chunks load before nearby ones.")
+            .getLong(8, 8, ConfigSystem.LongChecks.POSITIVE_VALUES_ONLY);
+
+    public static final int reservedCloseChunkSlots = (int) new ConfigSystem.ConfigAccessor()
+            .key("noTickViewDistance.reservedCloseChunkSlots")
+            .comment("Number of concurrent chunk load slots reserved exclusively for close chunks. \n" +
+                    " These slots cannot be used by distant chunks, ensuring close chunks never starve. \n" +
+                    " Set to 0 to disable reserved slots (original behavior).")
+            .getLong(4, 4);
+
     public static final boolean compatibilityMode = new ConfigSystem.ConfigAccessor()
             .key("noTickViewDistance.compatibilityMode")
             .comment("Whether to use compatibility mode to send chunks \n" +
