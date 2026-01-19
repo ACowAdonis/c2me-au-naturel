@@ -5,6 +5,8 @@ import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectLinkedOpenHashSet;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.BitSet;
+
 /**
  * A priority queue with fixed number of priorities and allows changing priorities of elements.
  * Not thread-safe.
@@ -15,12 +17,14 @@ public class DynamicPriorityQueue<E> {
 
     private final ObjectLinkedOpenHashSet<E>[] priorities;
     private final Object2IntMap<E> priorityMap = new Object2IntOpenHashMap<>();
+    private final BitSet nonEmptyBuckets;
 
     private int currentMinPriority = 0;
 
     public DynamicPriorityQueue(int priorityCount) {
         //noinspection unchecked
         this.priorities = new ObjectLinkedOpenHashSet[priorityCount];
+        this.nonEmptyBuckets = new BitSet(priorityCount);
         for (int i = 0; i < priorityCount; i++) {
             this.priorities[i] = new ObjectLinkedOpenHashSet<>();
         }
@@ -34,6 +38,7 @@ public class DynamicPriorityQueue<E> {
 
         priorities[priority].add(element);
         priorityMap.put(element, priority);
+        nonEmptyBuckets.set(priority);
         if (priority < currentMinPriority)
             currentMinPriority = priority;
     }
@@ -47,7 +52,11 @@ public class DynamicPriorityQueue<E> {
         if (oldPriority == priority) return; // nothing to do
 
         priorities[oldPriority].remove(element);
+        if (priorities[oldPriority].isEmpty()) {
+            nonEmptyBuckets.clear(oldPriority);
+        }
         priorities[priority].add(element);
+        nonEmptyBuckets.set(priority);
         priorityMap.put(element, priority);
 
         if (priority < currentMinPriority) currentMinPriority = priority;
@@ -55,17 +64,22 @@ public class DynamicPriorityQueue<E> {
 
     @Nullable
     public E dequeue() {
-        while (currentMinPriority < priorities.length) {
-            ObjectLinkedOpenHashSet<E> priority = this.priorities[currentMinPriority];
-            if (priority.isEmpty()) {
-                currentMinPriority++;
-                continue;
-            }
-            E element = priority.removeFirst();
-            priorityMap.removeInt(element);
-            return element;
+        // Use BitSet to jump directly to next non-empty bucket (O(1) instead of O(n))
+        int nextPriority = nonEmptyBuckets.nextSetBit(currentMinPriority);
+        if (nextPriority < 0) {
+            currentMinPriority = priorities.length; // Mark as exhausted
+            return null;
         }
-        return null;
+
+        currentMinPriority = nextPriority;
+        ObjectLinkedOpenHashSet<E> bucket = this.priorities[nextPriority];
+        E element = bucket.removeFirst();
+        priorityMap.removeInt(element);
+
+        if (bucket.isEmpty()) {
+            nonEmptyBuckets.clear(nextPriority);
+        }
+        return element;
     }
 
     public boolean contains(E element) {
@@ -77,6 +91,9 @@ public class DynamicPriorityQueue<E> {
             return; // ignore
         int priority = priorityMap.getInt(element);
         priorities[priority].remove(element);
+        if (priorities[priority].isEmpty()) {
+            nonEmptyBuckets.clear(priority);
+        }
         priorityMap.removeInt(element);
     }
 
