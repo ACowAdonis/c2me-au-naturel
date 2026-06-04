@@ -131,28 +131,38 @@ public class PlayerNoTickDistanceMap extends ChunkPosDistanceLevelPropagator {
         final int maxDistantSlots = Math.max(0, maxTotal - reservedSlots);
 
         // add new tickets with priority for close chunks
+        //
+        // The pending queue is ordered closest-first (lowest propagator level first),
+        // so every close chunk is dequeued before any distant chunk. That ordering lets
+        // us stop cleanly the moment the distant pool is full, without ever dropping a
+        // chunk and without scanning the rest of the queue.
         while (true) {
             final int currentCloseCount = this.closeChunkLoadFutures.size();
             final int currentDistantCount = this.distantChunkLoadFutures.size();
             final int currentTotal = currentCloseCount + currentDistantCount;
 
             if (currentTotal >= maxTotal) {
-                // No more slots available at all
+                // No slots available in either pool
                 break;
             }
 
             final ChunkPos pos = this.pendingTicketAdds.dequeue();
             if (pos == null) break;
 
-            final int distance = this.distanceFromNearestPlayer.get(pos.toLong());
-            final boolean isCloseChunk = distance <= closeChunkThreshold;
+            // distanceFromNearestPlayer stores the propagator *level*, not the chunk
+            // distance from the player. Convert back: level == (249 - viewDistance) + d,
+            // so d == level - (249 - viewDistance).
+            final int level = this.distanceFromNearestPlayer.get(pos.toLong());
+            final int distanceFromPlayer = level - (249 - this.viewDistance);
+            final boolean isCloseChunk = distanceFromPlayer <= closeChunkThreshold;
 
             if (!isCloseChunk && currentDistantCount >= maxDistantSlots) {
-                // Distant chunk but no slots available for distant chunks
-                // (reserved slots are for close chunks only)
-                // Skip this chunk for now - close chunks will be processed first
-                // due to priority queue ordering, so we continue to find close chunks
-                continue;
+                // No distant slot is free right now. Because the queue is ordered
+                // closest-first, every remaining queued chunk is also distant and
+                // equally unplaceable, so re-enqueue this one (never drop it) and stop.
+                // A freed slot re-triggers this method via the load-future callback.
+                this.pendingTicketAdds.enqueue(pos, level);
+                break;
             }
 
             if (this.managedChunkTickets.add(pos.toLong())) {
