@@ -7,7 +7,6 @@ import com.ishland.c2me.base.common.theinterface.IDirectStorage;
 import com.ishland.c2me.base.common.util.SneakyThrow;
 import com.ishland.c2me.base.mixin.access.IVersionedChunkStorage;
 import com.ishland.c2me.threading.chunkio.common.AsyncSerializationManager;
-import com.ishland.c2me.threading.chunkio.common.BlendingInfoUtil;
 import com.ishland.c2me.threading.chunkio.common.ChunkIoMainThreadTaskUtils;
 import com.ishland.c2me.threading.chunkio.common.Config;
 import com.ishland.c2me.threading.chunkio.common.IAsyncChunkStorage;
@@ -51,14 +50,12 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.nio.file.Path;
-import java.util.BitSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
-import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.Supplier;
 
@@ -187,21 +184,12 @@ public abstract class MixinThreadedAnvilChunkStorage extends VersionedChunkStora
                         return null; // unreachable
                     }
                 })
-//                .thenCombine(poiData, (protoChunk, tag) -> protoChunk)
-//                .thenCombine(blendingInfos, (protoChunk, bitSet) -> {
-//                    if (protoChunk != null) ((ProtoChunkExtension) protoChunk).setBlendingInfo(pos, bitSet);
-//                    return protoChunk;
-//                })
                 .thenApplyAsync(protoChunk -> {
-                    // blending
+                    // Blending precompute removed: this fork targets fresh 1.20.1 worlds
+                    // only, where blending (pre-1.18 terrain border smoothing) never
+                    // activates. The precompute cost a region-wide NBT scan per region
+                    // per load session purely to set a flag that is always false here.
                     protoChunk = protoChunk != null ? protoChunk : (ProtoChunk) this.getProtoChunk(pos);
-                    if (protoChunk.getBelowZeroRetrogen() != null || protoChunk.getStatus().getChunkType() == ChunkStatus.ChunkType.PROTOCHUNK) {
-                        final CompletionStage<List<BitSet>> blendingInfos = BlendingInfoUtil.getBlendingInfos((StorageIoWorker) this.getWorker(), pos);
-                        ProtoChunk finalProtoChunk = protoChunk;
-                        ((ProtoChunkExtension) protoChunk).setBlendingComputeFuture(
-                                blendingInfos.thenAccept(bitSet -> ((ProtoChunkExtension) finalProtoChunk).setBlendingInfo(pos, bitSet)).toCompletableFuture()
-                        );
-                    }
 
                     ((ProtoChunkExtension) protoChunk).setInitialMainThreadComputeFuture(poiData.thenAcceptAsync(poiDataNbt -> {
                         try {
@@ -230,38 +218,7 @@ public abstract class MixinThreadedAnvilChunkStorage extends VersionedChunkStora
         });
         return future;
 
-        // [VanillaCopy] - for reference
-        /*
-        return CompletableFuture.supplyAsync(() -> {
-         try {
-            this.world.getProfiler().visit("chunkLoad");
-            CompoundTag compoundTag = this.getUpdatedChunkNbt(pos);
-            if (compoundTag != null) {
-               boolean bl = compoundTag.contains("Level", 10) && compoundTag.getCompound("Level").contains("Status", 8);
-               if (bl) {
-                  Chunk chunk = ChunkSerializer.deserialize(this.world, this.structureManager, this.pointOfInterestStorage, pos, compoundTag);
-                  this.method_27053(pos, chunk.getStatus().getChunkType());
-                  return Either.left(chunk);
-               }
-
-               LOGGER.error((String)"Chunk file at {} is missing level data, skipping", (Object)pos);
-            }
-         } catch (CrashException var5) {
-            Throwable throwable = var5.getCause();
-            if (!(throwable instanceof IOException)) {
-               this.method_27054(pos);
-               throw var5;
-            }
-
-            LOGGER.error((String)"Couldn't load chunk {}", (Object)pos, (Object)throwable);
-         } catch (Exception var6) {
-            LOGGER.error((String)"Couldn't load chunk {}", (Object)pos, (Object)var6);
-         }
-
-         this.method_27054(pos);
-         return Either.left(new ProtoChunk(pos, UpgradeData.NO_UPGRADE_DATA, this.world));
-      }, this.mainThreadExecutor);
-         */
+// stale pre-1.18 vanilla reference copy removed
     }
 
     private CompletableFuture<Optional<NbtCompound>> getUpdatedChunkNbtAtAsync(ChunkPos pos) {

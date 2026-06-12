@@ -51,10 +51,6 @@ public class C2MEStorageVanillaInterface extends StorageIoWorker implements IDir
         this.backend.close().join();
     }
 
-    @Override
-    public boolean needsBlending(ChunkPos chunkPos, int i) {
-        return super.needsBlending(chunkPos, i);
-    }
 
 
     @Override

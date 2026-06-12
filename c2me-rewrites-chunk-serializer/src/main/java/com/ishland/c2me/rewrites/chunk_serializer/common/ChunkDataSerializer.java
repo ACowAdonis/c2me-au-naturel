@@ -2,15 +2,12 @@ package com.ishland.c2me.rewrites.chunk_serializer.common;
 
 import com.ishland.c2me.rewrites.chunk_serializer.common.utils.LithiumUtil;
 import com.ishland.c2me.rewrites.chunk_serializer.common.utils.StarLightUtil;
-import com.ishland.c2me.base.mixin.access.IBelowZeroRetrogen;
-import com.ishland.c2me.base.mixin.access.IBlendingData;
 import com.ishland.c2me.base.mixin.access.IChunkSection;
 import com.ishland.c2me.base.mixin.access.IChunkTickScheduler;
 import com.ishland.c2me.base.mixin.access.ISimpleTickScheduler;
 import com.ishland.c2me.base.mixin.access.IState;
 import com.ishland.c2me.base.mixin.access.IStructurePiece;
 import com.ishland.c2me.base.mixin.access.IStructureStart;
-import com.ishland.c2me.base.mixin.access.IUpgradeData;
 import com.mojang.serialization.Codec;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import it.unimi.dsi.fastutil.shorts.ShortList;
@@ -21,9 +18,7 @@ import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
-import net.minecraft.nbt.NbtList;
 import net.minecraft.nbt.NbtOps;
-import net.minecraft.nbt.NbtShort;
 import net.minecraft.registry.DefaultedRegistry;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.Registry;
@@ -40,13 +35,11 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.math.ChunkSectionPos;
 import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.EightWayDirection;
 import net.minecraft.world.ChunkSerializer;
 import net.minecraft.world.Heightmap;
 import net.minecraft.world.LightType;
 import net.minecraft.world.biome.Biome;
 import net.minecraft.world.biome.BiomeKeys;
-import net.minecraft.world.chunk.BelowZeroRetrogen;
 import net.minecraft.world.chunk.Chunk;
 import net.minecraft.world.chunk.ChunkNibbleArray;
 import net.minecraft.world.chunk.ChunkSection;
@@ -54,11 +47,9 @@ import net.minecraft.world.chunk.ChunkStatus;
 import net.minecraft.world.chunk.PalettedContainer;
 import net.minecraft.world.chunk.ProtoChunk;
 import net.minecraft.world.chunk.ReadableContainer;
-import net.minecraft.world.chunk.UpgradeData;
 import net.minecraft.world.chunk.light.LightingProvider;
 import net.minecraft.world.gen.GenerationStep;
 import net.minecraft.world.gen.carver.CarvingMask;
-import net.minecraft.world.gen.chunk.BlendingData;
 import net.minecraft.world.gen.structure.Structure;
 import net.minecraft.world.tick.ChunkTickScheduler;
 import net.minecraft.world.tick.OrderedTick;
@@ -89,9 +80,6 @@ public final class ChunkDataSerializer {
     private static final byte[] STRING_LAST_UPDATE = NbtWriter.getAsciiStringBytes("LastUpdate");
     private static final byte[] STRING_INHABITED_TIME = NbtWriter.getAsciiStringBytes("InhabitedTime");
     private static final byte[] STRING_STATUS = NbtWriter.getAsciiStringBytes("Status");
-    private static final byte[] STRING_BLENDING_DATA = NbtWriter.getAsciiStringBytes("blending_data");
-    private static final byte[] STRING_BELOW_ZERO_RETROGEN = NbtWriter.getAsciiStringBytes("below_zero_retrogen");
-    private static final byte[] STRING_UPGRADE_DATA = NbtWriter.getAsciiStringBytes("upgrade_data");
     private static final byte[] STRING_IS_LIGHT_ON = NbtWriter.getAsciiStringBytes("isLightOn");
     private static final byte[] STRING_BLOCK_ENTITIES = NbtWriter.getAsciiStringBytes("block_entities");
     private static final byte[] STRING_PALETTE = NbtWriter.getAsciiStringBytes("palette");
@@ -101,16 +89,7 @@ public final class ChunkDataSerializer {
     private static final byte[] STRING_BIOMES = NbtWriter.getAsciiStringBytes("biomes");
     private static final byte[] STRING_BLOCK_LIGHT = NbtWriter.getAsciiStringBytes("BlockLight");
     private static final byte[] STRING_SKY_LIGHT = NbtWriter.getAsciiStringBytes("SkyLight");
-    private static final byte[] STRING_OLD_NOISE = NbtWriter.getAsciiStringBytes("old_noise");
-    private static final byte[] STRING_HEIGHTS = NbtWriter.getAsciiStringBytes("heights");
-    private static final byte[] STRING_MIN_SECTION = NbtWriter.getAsciiStringBytes("min_section");
-    private static final byte[] STRING_MAX_SECTION = NbtWriter.getAsciiStringBytes("max_section");
-    private static final byte[] STRING_TARGET_STATUS = NbtWriter.getAsciiStringBytes("target_status");
-    private static final byte[] STRING_MISSING_BEDROCK = NbtWriter.getAsciiStringBytes("missing_bedrock");
-    private static final byte[] STRING_INDICES = NbtWriter.getAsciiStringBytes("Indices");
-    private static final byte[] STRING_SIDES = NbtWriter.getAsciiStringBytes("Sides");
     private static final byte[] STRING_ENTITIES = NbtWriter.getAsciiStringBytes("entities");
-    private static final byte[] STRING_LIGHTS = NbtWriter.getAsciiStringBytes("Lights");
     private static final byte[] STRING_CARVING_MASKS = NbtWriter.getAsciiStringBytes("CarvingMasks");
     private static final byte[] STRING_HEIGHTMAPS = NbtWriter.getAsciiStringBytes("Heightmaps");
     private static final byte[] STRING_POST_PROCESSING = NbtWriter.getAsciiStringBytes("PostProcessing");
@@ -142,10 +121,6 @@ public final class ChunkDataSerializer {
     private static final byte[] STRING_C2ME = NbtWriter.getAsciiStringBytes("C2ME");
     private static final byte[] STRING_KROPPEB = NbtWriter.getAsciiStringBytes("Kroppeb was here :); Version: 0.3.0");
 
-    private static final byte[] STRING_C2ME_MARK_A = NbtWriter.getAsciiStringBytes("C2ME::MarkA");
-    private static final byte[] STRING_MARKER_FLUID_PROTO = NbtWriter.getAsciiStringBytes("fluid:proto");
-    private static final byte[] STRING_MARKER_FLUID_FULL = NbtWriter.getAsciiStringBytes("fluid:full");
-    private static final byte[] STRING_MARKER_FLUID_FALLBACK = NbtWriter.getAsciiStringBytes("fluid:fallback");
 
     // C2ME fix: Pre-cached numeric index strings for upgrade data (avoids String.valueOf allocation)
     private static final byte[][] STRING_NUMERIC_INDICES = new byte[32][];
@@ -181,28 +156,17 @@ public final class ChunkDataSerializer {
         writer.putLong(STRING_INHABITED_TIME, chunk.getInhabitedTime());
         writer.putString(STRING_STATUS, ((ChunkStatusAccessor) chunk.getStatus()).getIdBytes());
 
-        BlendingData blendingData = chunk.getBlendingData();
-        if (blendingData != null) {
-            // Inline codec
-            writer.startCompound(STRING_BLENDING_DATA);
-            writeBlendingData(writer, (IBlendingData) blendingData);
-            writer.finishCompound();
-        }
-
-        BelowZeroRetrogen belowZeroRetrogen = chunk.getBelowZeroRetrogen();
-        if (belowZeroRetrogen != null) {
-            // Inline codec
-            writer.startCompound(STRING_BELOW_ZERO_RETROGEN);
-            writeBelowZeroRetrogen(writer, (IBelowZeroRetrogen) (Object) belowZeroRetrogen);
-            writer.finishCompound();
-        }
-
-        UpgradeData upgradeData = chunk.getUpgradeData();
-        if (!upgradeData.isDone()) {
-            // Inline serialization
-            writer.startCompound(STRING_UPGRADE_DATA);
-            writeUpgradeData(writer, (IUpgradeData) upgradeData);
-            writer.finishCompound();
+        // Legacy world-upgrade fields (blending_data, below_zero_retrogen,
+        // upgrade_data) are not supported by this serializer: the fork targets
+        // freshly created 1.20.1 worlds where none of them ever exist. Refuse
+        // loudly rather than silently stripping them - dropping
+        // below_zero_retrogen would permanently damage 1.17-upgraded terrain.
+        // The throw routes into the existing failed-save handling, preserving
+        // the on-disk copy.
+        if (chunk.getBlendingData() != null || chunk.getBelowZeroRetrogen() != null || !chunk.getUpgradeData().isDone()) {
+            throw new UnsupportedOperationException(
+                    "Chunk " + chunk.getPos() + " carries pre-1.20.1 upgrade data (world upgraded from an older version). "
+                            + "The gc-free chunk serializer does not support legacy worlds; disable ioSystem.gcFreeChunkSerializer in c2me.toml.");
         }
 
         ChunkSection[] chunkSections = chunk.getSectionArray();
@@ -239,7 +203,6 @@ public final class ChunkDataSerializer {
                 writer.putElementEntry(entity);
             }
 
-//            putShortListArray(j.getLightSourcesBySection(), writer, STRING_LIGHTS); // no longer exists after lighting update
 
             writer.startCompound(STRING_CARVING_MASKS);
 
@@ -561,88 +524,7 @@ public final class ChunkDataSerializer {
         writer.finishCompound();
     }
 
-    /**
-     * mirror of {@link BlendingData#CODEC}
-     */
-    private static void writeBlendingData(NbtWriter writer, IBlendingData blendingData) {
-        writer.putInt(STRING_MIN_SECTION, blendingData.getOldHeightLimit().getBottomSectionCoord());
-        writer.putInt(STRING_MAX_SECTION, blendingData.getOldHeightLimit().getTopSectionCoord());
-
-        double[] heights = blendingData.getSurfaceHeights();
-        for (double d : heights) {
-            if (d != Double.MAX_VALUE) {
-                writer.putDoubles(STRING_HEIGHTS, heights);
-                return;
-            }
-        }
-
-        // set to empty list
-        writer.startFixedList(STRING_HEIGHTS, 0, NbtElement.DOUBLE_TYPE);
-    }
-
-    /**
-     * mirror of {@link BelowZeroRetrogen#CODEC}
-     */
-    private static void writeBelowZeroRetrogen(NbtWriter writer, IBelowZeroRetrogen belowZeroRetrogen) {
-        writer.putRegistry(STRING_TARGET_STATUS, Registries.CHUNK_STATUS, belowZeroRetrogen.invokeGetTargetStatus());
-
-        BitSet missingBedrock = belowZeroRetrogen.getMissingBedrock();
-        if (!missingBedrock.isEmpty()) {
-            writer.putLongArray(STRING_MISSING_BEDROCK, missingBedrock.toLongArray());
-        }
-    }
-
-
-    private static void writeUpgradeData(NbtWriter writer, IUpgradeData upgradeData) {
-        long indicesStart = -1;
-        int indicesCount = 0;
-
-        int[][] centerIndicesToUpgrade = upgradeData.getCenterIndicesToUpgrade();
-
-        for (int i = 0; i < centerIndicesToUpgrade.length; ++i) {
-            if (centerIndicesToUpgrade[i] != null && centerIndicesToUpgrade[i].length != 0) {
-                if (indicesStart == -1) {
-                    indicesStart = writer.startList(STRING_INDICES, NbtElement.INT_ARRAY_TYPE);
-                }
-                indicesCount++;
-                // C2ME fix: Use pre-cached numeric strings to avoid allocation
-                byte[] indexBytes = i < STRING_NUMERIC_INDICES.length
-                        ? STRING_NUMERIC_INDICES[i]
-                        : NbtWriter.getAsciiStringBytes(String.valueOf(i));
-                writer.putIntArray(indexBytes, centerIndicesToUpgrade[i]);
-            }
-        }
-
-        if (indicesStart != -1) {
-            writer.finishList(indicesStart, indicesCount);
-        }
-
-        int i = 0;
-
-        for (EightWayDirection eightWayDirection : upgradeData.getSidesToUpgrade()) {
-            i |= 1 << eightWayDirection.ordinal();
-        }
-
-        writer.putByte(STRING_SIDES, (byte) i);
-    }
-
     @Deprecated
-    public static NbtList toNbt(ShortList[] lists) {
-        NbtList nbtList = new NbtList();
-
-        for (ShortList shortList : lists) {
-            NbtList nbtList2 = new NbtList();
-            if (shortList != null) {
-                for (Short short_ : shortList) {
-                    nbtList2.add(NbtShort.of(short_));
-                }
-            }
-
-            nbtList.add(nbtList2);
-        }
-
-        return nbtList;
-    }
 
 
     /**
