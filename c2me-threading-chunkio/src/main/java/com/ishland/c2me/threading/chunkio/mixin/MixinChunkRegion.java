@@ -22,10 +22,28 @@ public abstract class MixinChunkRegion implements StructureWorldAccess {
     private void waitForFutureBeforeNotifyChanges(ServerWorld instance, BlockPos pos, BlockState oldBlock, BlockState newBlock, Operation<Void> operation) {
         final Chunk chunk = this.getChunk(pos);
         if (chunk instanceof ProtoChunk protoChunk) {
-            final CompletableFuture<Void> future = ((ProtoChunkExtension) protoChunk).getInitialMainThreadComputeFuture();
-            if (future != null && !future.isDone()) {
-                future.thenRun(() -> operation.call(instance, pos, oldBlock, newBlock));
-                return;
+            final ProtoChunkExtension ext = (ProtoChunkExtension) protoChunk;
+            // Deferred notifications must apply in submission order: POI add/remove
+            // for the same position is order-sensitive, and independent thenRun
+            // registrations on one future execute LIFO. Chain through a per-chunk
+            // tail instead. The tail check also prevents an inline call from
+            // overtaking still-pending chained notifications after the base future
+            // completes.
+            synchronized (ext) {
+                final CompletableFuture<Void> tail = ext.c2me$getNotifyChainTail();
+                CompletableFuture<Void> base = null;
+                if (tail != null && !tail.isDone()) {
+                    base = tail;
+                } else {
+                    final CompletableFuture<Void> future = ext.getInitialMainThreadComputeFuture();
+                    if (future != null && !future.isDone()) {
+                        base = future;
+                    }
+                }
+                if (base != null) {
+                    ext.c2me$setNotifyChainTail(base.thenRun(() -> operation.call(instance, pos, oldBlock, newBlock)));
+                    return;
+                }
             }
         }
         operation.call(instance, pos, oldBlock, newBlock);

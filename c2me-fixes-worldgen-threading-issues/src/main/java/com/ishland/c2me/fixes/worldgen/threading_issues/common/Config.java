@@ -10,10 +10,11 @@ public class Config {
                         Enforces safe world random access. \s
                         This feature detects unsafe off-thread world random access, helping to find the causes \s
                         of mysterious "Accessing LegacyRandomSource from multiple threads" crash. \s
-                        The default behavior is to fail hard when such bad things happens. \s
-                        Disabling this option will replace this behavior with a warning. \s
-                        
-                        It is generally not recommended to disable this settings unless you know what you are doing \s
+                        By default (false) offending accesses are diverted to a thread-local fallback \s
+                        and logged once per caller - safe for large modpacks where third-party mods \s
+                        routinely roll RNG inside threaded worldgen. \s
+                        Enabling this makes such access a hard failure instead; useful when hunting \s
+                        the offending mod, unsuitable for normal play. \s
                         
                         """)
             .getBoolean(false, false);

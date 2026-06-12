@@ -1,6 +1,7 @@
 package com.ishland.c2me.fixes.worldgen.threading_issues.mixin.threading;
 
 import it.unimi.dsi.fastutil.longs.Long2BooleanMap;
+import it.unimi.dsi.fastutil.longs.Long2BooleanMaps;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMaps;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
@@ -22,6 +23,7 @@ import java.util.Collection;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 @Mixin(StructureLocator.class)
 public class MixinStructureChecker {
@@ -51,6 +53,18 @@ public class MixinStructureChecker {
                 if (next.isEmpty()) iterator.remove();
             }
         }
+    }
+
+    // The outer map is synchronized, but vanilla mutates the returned inner
+    // Long2BooleanMap (computeIfAbsent in getStructurePresence) OUTSIDE the
+    // mutex while the eviction redirect above removes from the same inner map
+    // under it - a put/remove race on an open-hash table. Wrap inner maps with
+    // the same mutex at their single creation site so all inner-map access
+    // shares one lock.
+    @SuppressWarnings("unchecked")
+    @Redirect(method = "getStructurePresence", at = @At(value = "INVOKE", target = "Ljava/util/Map;computeIfAbsent(Ljava/lang/Object;Ljava/util/function/Function;)Ljava/lang/Object;"))
+    private Object redirectInnerMapCreation(Map<Object, Object> map, Object key, Function<Object, Object> factory) {
+        return map.computeIfAbsent(key, k -> Long2BooleanMaps.synchronize((Long2BooleanMap) factory.apply(k), this.mapMutex));
     }
 
 }

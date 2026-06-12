@@ -11,6 +11,7 @@ import java.util.Objects;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 
 public class CheckedThreadLocalRandom extends LocalRandom {
@@ -22,6 +23,12 @@ public class CheckedThreadLocalRandom extends LocalRandom {
     // Rate limiting: track unique caller locations to avoid log spam
     // Key is the caller class+method+line from stack trace
     private static final Set<String> LOGGED_LOCATIONS = Collections.newSetFromMap(new ConcurrentHashMap<>());
+
+    // Gate before the location dedup: identifying the caller requires a full stack
+    // walk (tens of microseconds), and off-thread access can be per-block hot when a
+    // mod rolls RNG inside threaded worldgen. Cap diagnostic cost at one stack walk
+    // per second; distinct offenders still get logged within a few seconds.
+    private static final AtomicLong LAST_STACK_WALK_TIME = new AtomicLong();
 
     static {
         if (Config.enforceSafeWorldRandomAccess) {
@@ -50,12 +57,15 @@ public class CheckedThreadLocalRandom extends LocalRandom {
     }
 
     private void handleNotOwner() {
-        // Extract unique caller location for rate limiting (skip internal frames)
-        String callerLocation = getCallerLocation();
-
-        // When not enforcing, only log each unique location once to avoid spam
+        // When not enforcing, gate BEFORE the expensive stack walk, then dedup by
+        // caller location so each offender is logged once
         if (!Config.enforceSafeWorldRandomAccess) {
-            if (!LOGGED_LOCATIONS.add(callerLocation)) {
+            final long now = System.currentTimeMillis();
+            final long last = LAST_STACK_WALK_TIME.get();
+            if (now - last < 1000L || !LAST_STACK_WALK_TIME.compareAndSet(last, now)) {
+                return;
+            }
+            if (!LOGGED_LOCATIONS.add(getCallerLocation())) {
                 return; // Already logged this location
             }
         }
@@ -100,10 +110,12 @@ public class CheckedThreadLocalRandom extends LocalRandom {
         StackTraceElement[] stack = Thread.currentThread().getStackTrace();
         for (StackTraceElement element : stack) {
             String className = element.getClassName();
-            // Skip internal frames
+            // Skip internal frames. Match by simple-name fragments that survive
+            // both Yarn (dev) and SRG/Mojmap (production) remapping; an exact
+            // check for java.lang.Thread - contains("Thread") would also skip
+            // real callers like ThreadedAnvilChunkStorage and misattribute them
             if (className.contains("CheckedThreadLocalRandom") ||
                 className.contains("BitRandomSource") ||
-                className.contains("Thread") ||
                 className.equals("java.lang.Thread")) {
                 continue;
             }

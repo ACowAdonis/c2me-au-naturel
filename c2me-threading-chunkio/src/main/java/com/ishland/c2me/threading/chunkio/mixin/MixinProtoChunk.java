@@ -84,4 +84,16 @@ public class MixinProtoChunk implements ProtoChunkExtension {
         return this.initialMainThreadComputeFuture;
     }
 
+    private CompletableFuture<Void> c2me$notifyChainTail = null;
+
+    @Override
+    public CompletableFuture<Void> c2me$getNotifyChainTail() {
+        return this.c2me$notifyChainTail;
+    }
+
+    @Override
+    public void c2me$setNotifyChainTail(CompletableFuture<Void> tail) {
+        this.c2me$notifyChainTail = tail;
+    }
+
 }
