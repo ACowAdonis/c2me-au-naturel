@@ -448,6 +448,13 @@ public final class ChunkDataSerializer {
 //                }
 
                 if (blockNibble != null) {
+                    // light-only boundary sections (bl2 == false) must still open their
+                    // compound: tags written with hasInner == false merge into the next
+                    // section's compound and the light state is silently lost on load
+                    if (!hasInner) {
+                        writer.compoundEntryStart();
+                        hasInner = true;
+                    }
                     if (blockNibble.getData() != null) {
                         writer.putByteArray(STRING_BLOCK_LIGHT, blockNibble.getData());
                     }
@@ -455,6 +462,10 @@ public final class ChunkDataSerializer {
                 }
 
                 if (skyNibble != null) {
+                    if (!hasInner) {
+                        writer.compoundEntryStart();
+                        hasInner = true;
+                    }
                     if (skyNibble.getData() != null) {
                         writer.putByteArray(STRING_SKY_LIGHT, skyNibble.getData());
                     }
@@ -658,11 +669,17 @@ public final class ChunkDataSerializer {
             byte[] key
     ) {
         if (scheduler instanceof ISimpleTickScheduler<T> simpleTickSchedulerAccessor) {
+            // count entries as written, not via size() taken before iteration: the
+            // collections can mutate during async serialization, and a list header
+            // that disagrees with the emitted entry count is structurally corrupt NBT
             final List<Tick<T>> scheduledTicks = simpleTickSchedulerAccessor.getScheduledTicks();
-            writer.startFixedList(key, scheduledTicks.size(), NbtElement.COMPOUND_TYPE);
+            long list = writer.startList(key, NbtElement.COMPOUND_TYPE);
+            int size = 0;
             for (Tick<T> scheduledTick : scheduledTicks) {
                 writeTick(writer, scheduledTick, reg);
+                size++;
             }
+            writer.finishList(list, size);
         } else if (scheduler instanceof IChunkTickScheduler<T> chunkTickSchedulerAccess) {
 
             int size = 0;
@@ -671,10 +688,9 @@ public final class ChunkDataSerializer {
             final @Nullable List<Tick<T>> scheduledTicks = chunkTickSchedulerAccess.getTicks();
 
             if (scheduledTicks != null) {
-                size += scheduledTicks.size();
-
                 for (Tick<T> scheduledTick : scheduledTicks) {
                     writeTick(writer, scheduledTick, reg);
+                    size++;
                 }
             }
 
@@ -682,17 +698,16 @@ public final class ChunkDataSerializer {
                 final Collection<Collection<OrderedTick<T>>> tickQueues = LithiumUtil.getTickQueueCollection(chunkTickSchedulerAccess);
 
                 for (Collection<OrderedTick<T>> tickQueue : tickQueues) {
-                    size += tickQueue.size();
                     for (OrderedTick<T> orderedTick : tickQueue) {
                         writeOrderedTick(writer, orderedTick, time, reg);
+                        size++;
                     }
                 }
             } else {
                 final Collection<OrderedTick<T>> tickQueue = chunkTickSchedulerAccess.getTickQueue();
-                size += tickQueue.size();
-
                 for (OrderedTick<T> orderedTick : tickQueue) {
                     writeOrderedTick(writer, orderedTick, time, reg);
+                    size++;
                 }
             }
 

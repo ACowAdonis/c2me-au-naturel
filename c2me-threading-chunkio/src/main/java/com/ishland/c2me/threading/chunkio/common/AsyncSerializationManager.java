@@ -22,7 +22,6 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Supplier;
 
 public class AsyncSerializationManager {
 
@@ -41,10 +40,13 @@ public class AsyncSerializationManager {
         final ArrayDeque<Scope> stack = scopeHolder.get();
         final int currentDepth = stack.size();
 
-        // C2ME fix: Detect and prevent unbounded scope stack growth
+        // Recovery must only ever fail the offending save: clearing the stack would
+        // destroy the scopes of other serializations in flight on this pooled thread,
+        // and their getScope() would then silently fall back to LIVE chunk data
+        // mid-serialization (mixed snapshot/live save) instead of failing cleanly.
         if (currentDepth >= MAX_SCOPE_DEPTH) {
-            LOGGER.error("Scope stack depth exceeded maximum ({}). This indicates a scope leak! Current chunk: {}. Clearing stack to prevent memory leak.", MAX_SCOPE_DEPTH, scope.pos, new Throwable());
-            stack.clear();
+            LOGGER.error("Scope stack depth exceeded maximum ({}) pushing chunk {}; failing this save only.", MAX_SCOPE_DEPTH, scope.pos, new Throwable());
+            throw new IllegalStateException("AsyncSerializationManager scope stack depth exceeded " + MAX_SCOPE_DEPTH);
         } else if (currentDepth >= WARN_SCOPE_DEPTH) {
             LOGGER.warn("Scope stack depth ({}) is unusually high for chunk {}. Possible scope leak from incompatible mod?", currentDepth, scope.pos, new Throwable());
         }
@@ -70,70 +72,21 @@ public class AsyncSerializationManager {
             LOGGER.error("Attempted to pop scope {} but stack is empty. Scope leak or double-pop detected!", scope.pos, new Throwable());
             return;
         }
-        if (scope != stack.peek()) {
-            LOGGER.error("Scope mismatch during pop! Expected {} but got {}. Clearing entire stack to recover.", stack.peek().pos, scope.pos, new Throwable());
-            stack.clear();
-            throw new IllegalArgumentException("Scope mismatch");
+        if (scope == stack.peek()) {
+            stack.pop();
+        } else if (stack.removeFirstOccurrence(scope)) {
+            // remove only the offending scope; clearing would corrupt the other
+            // serializations in flight on this thread (see push). No throw: pop
+            // runs in finally blocks, and throwing here would mask the original
+            // serialization exception.
+            LOGGER.error("Scope mismatch during pop! Expected {} but got {}. Removed the offending scope only; outer scopes preserved.", stack.peek().pos, scope.pos, new Throwable());
+        } else {
+            LOGGER.error("Attempted to pop scope {} that is not on the stack. Double-pop detected!", scope.pos, new Throwable());
         }
-        stack.pop();
 
         // C2ME fix: Defensive cleanup - if stack is empty, ensure ThreadLocal is cleaned
         if (stack.isEmpty()) {
             scopeHolder.remove();
-        }
-    }
-
-    /**
-     * C2ME fix: Forcefully clear the scope stack for the current thread.
-     * This should be called as a last resort to recover from scope leaks.
-     */
-    public static void clearScopeStack() {
-        final ArrayDeque<Scope> stack = scopeHolder.get();
-        if (!stack.isEmpty()) {
-            LOGGER.warn("Forcefully clearing scope stack with {} entries. This may indicate a scope leak.", stack.size(), new Throwable());
-            stack.clear();
-            scopeHolder.remove();
-        }
-    }
-
-    /**
-     * C2ME fix: Get current scope stack depth for monitoring purposes.
-     */
-    public static int getScopeDepth() {
-        return scopeHolder.get().size();
-    }
-
-    /**
-     * C2ME fix: Helper method to safely execute code within a scope with guaranteed cleanup.
-     * This prevents ThreadLocal leaks by ensuring pop() is always called, even if exceptions occur.
-     *
-     * @param scope the scope to use
-     * @param operation the operation to execute within the scope
-     * @return the result of the operation
-     * @param <T> the return type
-     */
-    public static <T> T withScope(Scope scope, Supplier<T> operation) {
-        push(scope);
-        try {
-            return operation.get();
-        } finally {
-            pop(scope);
-        }
-    }
-
-    /**
-     * C2ME fix: Helper method to safely execute code within a scope with guaranteed cleanup (void version).
-     * This prevents ThreadLocal leaks by ensuring pop() is always called, even if exceptions occur.
-     *
-     * @param scope the scope to use
-     * @param operation the operation to execute within the scope
-     */
-    public static void withScopeVoid(Scope scope, Runnable operation) {
-        push(scope);
-        try {
-            operation.run();
-        } finally {
-            pop(scope);
         }
     }
 

@@ -12,12 +12,16 @@ public class TheMod implements net.fabricmc.api.ModInitializer {
         if (ModuleEntryPoint.enabled) {
             SerializerAccess.registerSerializer((world, chunk) -> {
                 NbtWriter nbtWriter = new NbtWriter();
-                nbtWriter.start(NbtElement.COMPOUND_TYPE);
-                ChunkDataSerializer.write(world, chunk, nbtWriter);
-                nbtWriter.finishCompound();
-                final byte[] data = nbtWriter.toByteArray();
-                nbtWriter.release();
-                return Either.right(data);
+                try {
+                    // NbtWriter holds Unsafe-allocated native memory; a serialization
+                    // failure without release() leaks the buffer
+                    nbtWriter.start(NbtElement.COMPOUND_TYPE);
+                    ChunkDataSerializer.write(world, chunk, nbtWriter);
+                    nbtWriter.finishCompound();
+                    return Either.right(nbtWriter.toByteArray());
+                } finally {
+                    nbtWriter.release();
+                }
             });
         }
     }
