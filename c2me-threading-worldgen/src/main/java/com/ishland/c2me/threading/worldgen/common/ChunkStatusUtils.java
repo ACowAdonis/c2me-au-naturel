@@ -43,16 +43,13 @@ public class ChunkStatusUtils {
             return Config.allowThreadedFeatures ? PARALLELIZED : SINGLE_THREADED;
         } else if (status.equals(ChunkStatus.INITIALIZE_LIGHT) ||
                    status.equals(ChunkStatus.LIGHT)) {
-            // quick dispatches to the lighting engine; safe to run inline on the
-            // scheduler thread
             return AS_IS;
         }
-        // Unknown (modded) statuses: AS_IS would execute their full doWork inline
-        // on the single global scheduler thread, stalling scheduling for every
-        // dimension while a modded generation step runs. SINGLE_THREADED keeps the
-        // thread-safety guarantee (serialized via the per-world lock) but executes
-        // on the worker pool, which also matches where vanilla runs status work.
-        return SINGLE_THREADED;
+        // Unknown (modded) statuses keep upstream AS_IS semantics. An attempted
+        // SINGLE_THREADED change (2026-06-12, to protect the scheduler thread from
+        // slow modded doWork) shipped alongside a chunk-visibility regression and
+        // was reverted unbisected - re-attempt only in isolation with live testing.
+        return AS_IS;
     }
 
     public static <T> CompletableFuture<T> runChunkGenWithLock(ChunkPos target, ChunkStatus status, ChunkHolder holder, int radius, SchedulingManager schedulingManager, Supplier<CompletableFuture<T>> action) {
