@@ -352,7 +352,12 @@ public abstract class MixinThreadedAnvilChunkStorage extends VersionedChunkStora
 
                 final CompletableFuture<Chunk> originalSavingFuture = holder.getSavingFuture();
                 if (!originalSavingFuture.isDone()) {
-                    originalSavingFuture.handleAsync((_unused, __unused) -> asyncSave(tacs, chunk, holder), this.mainThreadExecutor);
+                    // needsSaving was cleared at the top of this method; re-arm it or the
+                    // re-entered save is a silent no-op and the chunk's changes are lost
+                    originalSavingFuture.handleAsync((_unused, __unused) -> {
+                        chunk.setNeedsSaving(true);
+                        return asyncSave(tacs, chunk, holder);
+                    }, this.mainThreadExecutor);
                     return false;
                 }
 
@@ -380,7 +385,12 @@ public abstract class MixinThreadedAnvilChunkStorage extends VersionedChunkStora
                         CompletableFuture.supplyAsync(() -> {
                                     scope.open();
                                     if (holder.getSavingFuture() != originalSavingFuture) {
-                                        this.mainThreadExecutor.execute(() -> asyncSave(tacs, chunk, holder));
+                                        this.mainThreadExecutor.execute(() -> {
+                                            // re-arm needsSaving (cleared at schedule time) so the
+                                            // re-entered save's guard passes
+                                            chunk.setNeedsSaving(true);
+                                            asyncSave(tacs, chunk, holder);
+                                        });
                                         throw new TaskCancellationException();
                                     }
                                     AsyncSerializationManager.push(scope);
@@ -404,11 +414,20 @@ public abstract class MixinThreadedAnvilChunkStorage extends VersionedChunkStora
                                         while (actual instanceof CompletionException e) actual = e.getCause();
                                         if (!(actual instanceof TaskCancellationException)) {
                                             LOGGER.error("Failed to save chunk {},{} asynchronously, falling back to sync saving", chunkPos.x, chunkPos.z, throwable);
+                                            // vanilla save(Chunk) has the same needsSaving guard that
+                                            // asyncSave cleared at schedule time; re-arm it or the
+                                            // fallback saves nothing
                                             final CompletableFuture<Chunk> savingFuture = holder.getSavingFuture();
                                             if (savingFuture != originalSavingFuture) {
-                                                savingFuture.handleAsync((_unused, __unused) -> save(chunk), this.mainThreadExecutor);
+                                                savingFuture.handleAsync((_unused, __unused) -> {
+                                                    chunk.setNeedsSaving(true);
+                                                    return save(chunk);
+                                                }, this.mainThreadExecutor);
                                             } else {
-                                                this.mainThreadExecutor.execute(() -> this.save(chunk));
+                                                this.mainThreadExecutor.execute(() -> {
+                                                    chunk.setNeedsSaving(true);
+                                                    this.save(chunk);
+                                                });
                                             }
                                         }
                                     }
