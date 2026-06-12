@@ -64,9 +64,13 @@ public abstract class MixinPerlinNoiseSampler {
 
     @Inject(method = "<init>", at = @At("RETURN"))
     private void onInit(CallbackInfo ci) {
-        // Derive seed from first 4 bytes of permutation table to ensure deterministic behavior
-        this.hashSeed = (this.permutation[0] & 0xFF) | ((this.permutation[1] & 0xFF) << 8)
-                | ((this.permutation[2] & 0xFF) << 16) | ((this.permutation[3] & 0xFF) << 24);
+        // Fold the entire permutation table (FNV-1a) so the seed reflects the
+        // full table state rather than its first 4 bytes; runs once per sampler
+        int seed = 0x811c9dc5;
+        for (byte b : this.permutation) {
+            seed = (seed ^ (b & 0xFF)) * 0x01000193;
+        }
+        this.hashSeed = seed;
     }
 
     /**
@@ -84,10 +88,14 @@ public abstract class MixinPerlinNoiseSampler {
     /**
      * Compute gradient dot product using vanilla gradient table lookup.
      * Uses 4 bits of hash to select one of 16 gradients from GRADIENTS table.
+     * The shift is load-bearing: the low bits of the product are periodic in the
+     * inputs mod 16 (gradient field would tile every 16 lattice cells); bits 15+
+     * carry the multiplier's avalanche. Matches the benchmarked b3 variant and
+     * FastNoiseLite's construction.
      */
     @Unique
     private static double gradDot(int hash, double x, double y, double z) {
-        int idx = (hash & 15) << 2;
+        int idx = ((hash >> 15) & 15) << 2;
         return GRADIENTS[idx] * x + GRADIENTS[idx | 1] * y + GRADIENTS[idx | 2] * z;
     }
 
