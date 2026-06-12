@@ -136,7 +136,7 @@ public abstract class MixinChunkStatus implements IChunkStatus {
                                 () -> ChunkStatusUtils.getThreadingType(thiz).runTask(((IWorldGenLockable) world).getWorldGenSingleThreadedLock(), generationTask))
                         .exceptionally(t -> {
                             Throwable actual = t;
-                            while (actual instanceof CompletionException) actual = t.getCause();
+                            while (actual instanceof CompletionException ce && ce.getCause() != null) actual = ce.getCause();
                             if (actual instanceof CancellationException) {
                                 return ChunkHolder.UNLOADED_CHUNK;
                             } else {
