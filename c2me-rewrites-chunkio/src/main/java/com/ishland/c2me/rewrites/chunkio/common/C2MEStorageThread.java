@@ -9,7 +9,7 @@ import com.ishland.c2me.base.mixin.access.IRegionFile;
 import com.ishland.c2me.opts.chunkio.common.ConfigConstants;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ReferenceLinkedOpenHashMap;
-import it.unimi.dsi.fastutil.objects.ObjectArraySet;
+import it.unimi.dsi.fastutil.objects.ObjectOpenHashSet;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtIo;
 import net.minecraft.nbt.scanner.NbtScanner;
@@ -75,7 +75,9 @@ public class C2MEStorageThread extends Thread {
             this.wakeUp();
         }
     };
-    private final ObjectArraySet<CompletableFuture<Void>> writeFutures = new ObjectArraySet<>();
+    // hash set: ObjectArraySet has O(n) add (contains scan) and the per-cycle
+    // removeIf made write bursts O(n^2)
+    private final ObjectOpenHashSet<CompletableFuture<Void>> writeFutures = new ObjectOpenHashSet<>();
     private final Object sync = new Object();
 
     // C2ME fix: Monitoring fields to track queue sizes and warn about growth
@@ -420,7 +422,12 @@ public class C2MEStorageThread extends Thread {
                     .distinct()
                     .toArray(CompletableFuture[]::new));
             while (!allFuture.isDone()) {
-                handleTasks();
+                // write completions arrive as tasks on this thread, so keep
+                // draining - but park briefly when there is nothing to do
+                // instead of burning a core for the duration of the flush
+                if (!handleTasks()) {
+                    LockSupport.parkNanos("Waiting for write completions", 100_000L);
+                }
             }
             runWriteFutureGC();
         }

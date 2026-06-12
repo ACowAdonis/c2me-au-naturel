@@ -401,8 +401,13 @@ public abstract class MixinThreadedAnvilChunkStorage extends VersionedChunkStora
         }
     }
 
+    private int c2me$tickCounter = 0;
+
     @Inject(method = "tick", at = @At("HEAD"))
     private void onTick(CallbackInfo info) {
+        // GC/monitoring only: O(n) removeIf over a ConcurrentLinkedQueue every
+        // tick is wasted work - once a second is plenty for both purposes
+        if (++this.c2me$tickCounter % 20 != 0) return;
         GlobalExecutors.executor.execute(() -> {
             saveFutures.removeIf(CompletableFuture::isDone);
 
