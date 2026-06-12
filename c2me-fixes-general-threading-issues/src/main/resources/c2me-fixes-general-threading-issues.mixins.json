@@ -6,6 +6,7 @@
   "mixins": [
     "MixinChunkHolder",
     "MixinChunkTicketManager",
+    "MixinServerEntityManager",
     "MixinThreadedAnvilChunkStorage",
     "asynccatchers.MixinMinecraftServer",
     "asynccatchers.MixinServerChunkManager",
