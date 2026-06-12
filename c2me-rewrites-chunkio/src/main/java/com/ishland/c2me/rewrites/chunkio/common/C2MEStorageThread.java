@@ -129,11 +129,14 @@ public class C2MEStorageThread extends Thread {
 
     private boolean pollTasks() {
         boolean hasWork = false;
-        // Process reads FIRST to prioritize chunk loading during active exploration
-        hasWork = handlePendingReads() || hasWork;
         hasWork = handleTasks() || hasWork;
-        // Queue pending writes to cache/backlog
+        // Writes must be moved into the cache before any read is served:
+        // the cache is the only read-your-writes mechanism, so serving a read
+        // for a pos with an un-intaken write would load stale data from disk
+        // that later re-saves over the newer state. Intake does no disk I/O;
+        // read prioritization is provided by the writeBacklog() gating below.
         hasWork = handlePendingWrites() || hasWork;
+        hasWork = handlePendingReads() || hasWork;
         // Only flush write backlog when no reads are waiting
         if (pendingReadRequests.isEmpty()) {
             hasWork = writeBacklog() || hasWork;
@@ -282,6 +285,10 @@ public class C2MEStorageThread extends Thread {
     private boolean handlePendingReads() {
         boolean hasWork = false;
         while (!pendingReadRequests.isEmpty()) {
+            // This drain loop keeps consuming reads that arrive while it runs,
+            // so writes enqueued before those reads must be intaken first to
+            // keep the cache's read-your-writes guarantee.
+            handlePendingWrites();
             ReadRequest readRequest = this.pendingReadRequests.poll();
             hasWork = true;
             // C2ME fix: Decrement queue size counter
