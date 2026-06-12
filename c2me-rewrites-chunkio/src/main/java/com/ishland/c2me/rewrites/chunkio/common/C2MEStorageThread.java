@@ -7,6 +7,7 @@ import com.ishland.c2me.base.common.util.SneakyThrow;
 import com.ishland.c2me.base.mixin.access.IRegionBasedStorage;
 import com.ishland.c2me.base.mixin.access.IRegionFile;
 import com.ishland.c2me.opts.chunkio.common.ConfigConstants;
+import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ReferenceLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectArraySet;
 import net.minecraft.nbt.NbtCompound;
@@ -52,9 +53,13 @@ public class C2MEStorageThread extends Thread {
     private final AtomicBoolean closing = new AtomicBoolean(false);
     private final CompletableFuture<Void> closeFuture = new CompletableFuture<>();
 
+    // bounded retries for failed region-file writes; storage-thread confined
+    private static final int MAX_WRITE_RETRIES = 3;
+
     private final RegionBasedStorage storage;
     private final Long2ReferenceLinkedOpenHashMap<Either<NbtCompound, byte[]>> writeBacklog = new Long2ReferenceLinkedOpenHashMap<>();
     private final Long2ReferenceLinkedOpenHashMap<Either<NbtCompound, byte[]>> cache = new Long2ReferenceLinkedOpenHashMap<>();
+    private final Long2IntOpenHashMap writeRetryCounts = new Long2IntOpenHashMap();
     private final ConcurrentLinkedQueue<ReadRequest> pendingReadRequests = new ConcurrentLinkedQueue<>();
     private final ConcurrentLinkedQueue<WriteRequest> pendingWriteRequests = new ConcurrentLinkedQueue<>();
     private final ConcurrentLinkedQueue<Runnable> pendingTasks = new ConcurrentLinkedQueue<>();
@@ -98,10 +103,27 @@ public class C2MEStorageThread extends Thread {
             if (!hasWork) {
                 if (this.closing.get()) {
                     flush0(true);
+                    // requests that arrived during the flush: go around again
+                    if (this.hasPendingTasks()) continue;
                     try {
                         this.storage.close();
                     } catch (Throwable t) {
                         LOGGER.error("Error closing storage", t);
+                    }
+                    // post-close sweep: late stragglers must not hang (reads) or
+                    // vanish silently (writes)
+                    ReadRequest readRequest;
+                    while ((readRequest = this.pendingReadRequests.poll()) != null) {
+                        readQueueSize.decrementAndGet();
+                        readRequest.future().completeExceptionally(new CancellationException("Storage closed"));
+                    }
+                    int droppedWrites = 0;
+                    while (this.pendingWriteRequests.poll() != null) {
+                        writeQueueSize.decrementAndGet();
+                        droppedWrites++;
+                    }
+                    if (droppedWrites > 0) {
+                        LOGGER.error("{} chunk write(s) submitted after storage close were DROPPED", droppedWrites);
                     }
                     this.closeFuture.complete(null);
                     break;
@@ -134,13 +156,18 @@ public class C2MEStorageThread extends Thread {
         // the cache is the only read-your-writes mechanism, so serving a read
         // for a pos with an un-intaken write would load stale data from disk
         // that later re-saves over the newer state. Intake does no disk I/O;
-        // read prioritization is provided by the writeBacklog() gating below.
+        // read prioritization is provided by the writeBacklog budget below.
         hasWork = handlePendingWrites() || hasWork;
         hasWork = handlePendingReads() || hasWork;
-        // Only flush write backlog when no reads are waiting
-        if (pendingReadRequests.isEmpty()) {
-            hasWork = writeBacklog() || hasWork;
-        }
+        // Reads are latency-sensitive (the game is waiting on them); disk writes are
+        // not, because the cache serves read-your-writes for unflushed data. So writes
+        // yield to reads — but as a bounded throttle, never a lockout: under sustained
+        // read load the backlog must still drain, or it grows without bound and every
+        // backlogged chunk is lost on crash. Past the force-flush threshold the read
+        // gating is ignored entirely.
+        final int writeBudget = (pendingReadRequests.isEmpty() || this.writeBacklog.size() >= BACKLOG_FORCE_FLUSH_SIZE)
+                ? MAX_WRITES_PER_CYCLE : MIN_WRITES_PER_CYCLE_UNDER_READS;
+        hasWork = writeBacklog(writeBudget) || hasWork;
         return hasWork;
     }
 
@@ -192,42 +219,49 @@ public class C2MEStorageThread extends Thread {
     }
 
     public void setChunkData(long pos, @Nullable NbtCompound nbt) {
-        // C2ME fix: Check queue size and warn about potential memory issues
-        final int currentWriteQueueSize = writeQueueSize.incrementAndGet();
-        if (currentWriteQueueSize > MAX_WRITE_QUEUE_SIZE) {
-            LOGGER.error("Write request queue size ({}) exceeded maximum ({}). Storage thread may be overloaded! Chunk: {}", currentWriteQueueSize, MAX_WRITE_QUEUE_SIZE, new ChunkPos(pos));
-        } else if (currentWriteQueueSize > WARN_WRITE_QUEUE_SIZE) {
-            final long now = System.currentTimeMillis();
-            if (now - lastQueueWarningTime > 5000) { // Throttle warnings to once per 5 seconds
-                LOGGER.warn("Write request queue size ({}) is high. Storage thread may be experiencing heavy load. Consider reducing worldgen speed.", currentWriteQueueSize);
-                lastQueueWarningTime = now;
-            }
-        }
-
+        writeQueueSize.incrementAndGet();
+        warnWriteAccumulation(pos);
         this.pendingWriteRequests.add(new WriteRequest(pos, nbt != null ? Either.left(nbt) : null));
         // C2ME fix: Always wake up to avoid lost wakeup race condition
         this.wakeUp();
     }
 
     public void setChunkData(long pos, @Nullable byte[] data) {
-        // C2ME fix: Check queue size and warn about potential memory issues
-        final int currentWriteQueueSize = writeQueueSize.incrementAndGet();
-        if (currentWriteQueueSize > MAX_WRITE_QUEUE_SIZE) {
-            LOGGER.error("Write request queue size ({}) exceeded maximum ({}). Storage thread may be overloaded! Chunk: {}", currentWriteQueueSize, MAX_WRITE_QUEUE_SIZE, new ChunkPos(pos));
-        } else if (currentWriteQueueSize > WARN_WRITE_QUEUE_SIZE) {
-            final long now = System.currentTimeMillis();
-            if (now - lastQueueWarningTime > 5000) { // Throttle warnings to once per 5 seconds
-                LOGGER.warn("Write request queue size ({}) is high. Storage thread may be experiencing heavy load. Consider reducing worldgen speed.", currentWriteQueueSize);
-                lastQueueWarningTime = now;
-            }
-        }
-
+        writeQueueSize.incrementAndGet();
+        warnWriteAccumulation(pos);
         this.pendingWriteRequests.add(new WriteRequest(pos, data != null ? Either.right(data) : null));
         // C2ME fix: Always wake up to avoid lost wakeup race condition
         this.wakeUp();
     }
 
+    /**
+     * Warn when serialized chunk data accumulates in memory. The transit queue
+     * (pendingWriteRequests) drains within one poll cycle; the real accumulation
+     * under a slow disk is writeBacklog plus in-flight writeFutures. Those are
+     * storage-thread-confined structures — the size() reads here from caller
+     * threads are racy but harmless for monitoring purposes.
+     */
+    private void warnWriteAccumulation(long pos) {
+        final int accumulated = writeQueueSize.get() + this.writeBacklog.size() + this.writeFutures.size();
+        if (accumulated > MAX_WRITE_QUEUE_SIZE) {
+            final long now = System.currentTimeMillis();
+            if (now - lastQueueWarningTime > 5000) {
+                LOGGER.error("{} serialized chunks held in memory awaiting disk writes (limit {}). Disk cannot keep up; data-loss window on crash is growing. Chunk: {}", accumulated, MAX_WRITE_QUEUE_SIZE, new ChunkPos(pos));
+                lastQueueWarningTime = now;
+            }
+        } else if (accumulated > WARN_WRITE_QUEUE_SIZE) {
+            final long now = System.currentTimeMillis();
+            if (now - lastQueueWarningTime > 5000) {
+                LOGGER.warn("{} serialized chunks held in memory awaiting disk writes. Storage may be experiencing heavy load.", accumulated);
+                lastQueueWarningTime = now;
+            }
+        }
+    }
+
     public CompletableFuture<Void> flush(boolean sync) {
+        // after thread exit nothing drains pendingTasks; everything was already
+        // flushed during close, so don't strand the caller on a dead queue
+        if (this.closeFuture.isDone()) return CompletableFuture.completedFuture(null);
         return CompletableFuture.runAsync(() -> flush0(sync), this.executor);
     }
 
@@ -236,8 +270,9 @@ public class C2MEStorageThread extends Thread {
             while (true) {
                 runWriteFutureGC();
                 if (handleTasks()) continue;
-                if (handlePendingReads()) continue;
+                // write intake before reads: same read-your-writes ordering as pollTasks
                 if (handlePendingWrites()) continue;
+                if (handlePendingReads()) continue;
                 if (writeBacklog()) continue;
 
                 break;
@@ -348,17 +383,22 @@ public class C2MEStorageThread extends Thread {
 
     // Maximum chunks to write per poll cycle when no reads are pending
     private static final int MAX_WRITES_PER_CYCLE = 8;
+    // Guaranteed write progress per cycle while reads are pending (throttle, not lockout)
+    private static final int MIN_WRITES_PER_CYCLE_UNDER_READS = 1;
+    // Backlog size beyond which read gating is ignored and writes flush at full rate
+    private static final int BACKLOG_FORCE_FLUSH_SIZE = 1024;
 
     private boolean writeBacklog() {
+        return writeBacklog(MAX_WRITES_PER_CYCLE);
+    }
+
+    private boolean writeBacklog(int budget) {
         if (this.writeBacklog.isEmpty()) {
             return false;
         }
 
-        // Batch write multiple chunks when no reads are waiting
-        // This improves write throughput during quiet periods while
-        // still yielding to reads during active exploration
         int written = 0;
-        while (!this.writeBacklog.isEmpty() && written < MAX_WRITES_PER_CYCLE) {
+        while (!this.writeBacklog.isEmpty() && written < budget) {
             final long pos = this.writeBacklog.firstLongKey();
             final Either<NbtCompound, byte[]> nbt = this.writeBacklog.removeFirst();
             writeChunk(pos, nbt);
@@ -468,9 +508,27 @@ public class C2MEStorageThread extends Thread {
                     this.cache.remove(pos);
                 }
             }, this.executor).handleAsync((unused, throwable) -> {
-                if (throwable != null) LOGGER.error("Error writing chunk %s".formatted(new ChunkPos(pos)), throwable);
-                // TODO error retry
-
+                // runs on the storage thread: backlog/cache/retry state is safe to touch
+                if (throwable != null) {
+                    if (nbt == this.cache.get(pos)) { // still the newest data for this pos
+                        final int retries = this.writeRetryCounts.addTo(pos, 1) + 1;
+                        if (retries <= MAX_WRITE_RETRIES) {
+                            LOGGER.warn("Error writing chunk {}, re-queueing (attempt {}/{})", new ChunkPos(pos), retries, MAX_WRITE_RETRIES, throwable);
+                            this.writeBacklog.put(pos, nbt);
+                        } else {
+                            this.writeRetryCounts.remove(pos);
+                            // keep the cache entry: readers continue to see the newest
+                            // data even though the disk copy is stale
+                            LOGGER.error("Failed to write chunk {} after {} attempts; data is retained in memory but the on-disk copy is STALE", new ChunkPos(pos), MAX_WRITE_RETRIES, throwable);
+                        }
+                    } else {
+                        // superseded by a newer write; that write carries its own retries
+                        this.writeRetryCounts.remove(pos);
+                        LOGGER.warn("Error writing chunk {} (superseded by a newer write)", new ChunkPos(pos), throwable);
+                    }
+                } else {
+                    this.writeRetryCounts.remove(pos);
+                }
                 return null;
             }, this.executor);
             this.writeFutures.add(future);

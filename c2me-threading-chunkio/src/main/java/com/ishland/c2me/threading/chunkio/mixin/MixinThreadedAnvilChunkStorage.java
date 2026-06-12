@@ -465,8 +465,15 @@ public abstract class MixinThreadedAnvilChunkStorage extends VersionedChunkStora
 
     @Override
     public void completeAll() {
-        final CompletableFuture<Void> future = CompletableFuture.allOf(saveFutures.toArray(new CompletableFuture[0]));
-        this.mainThreadExecutor.runTasks(future::isDone); // wait for serialization to complete
+        // a single allOf snapshot misses saves re-scheduled while waiting (the
+        // deferred/cancelled/failed asyncSave re-entries run on this executor and
+        // add new futures) - loop until a full pass finds everything complete
+        while (true) {
+            saveFutures.removeIf(CompletableFuture::isDone);
+            if (saveFutures.isEmpty()) break;
+            final CompletableFuture<Void> future = CompletableFuture.allOf(saveFutures.toArray(new CompletableFuture[0]));
+            this.mainThreadExecutor.runTasks(future::isDone); // wait for serialization to complete
+        }
         super.completeAll();
     }
 }

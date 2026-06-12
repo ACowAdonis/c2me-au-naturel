@@ -32,7 +32,11 @@ public abstract class MixinStorageIoWorker implements IDirectStorage {
     @Override
     public CompletableFuture<Void> setRawChunkData(ChunkPos pos, byte[] data) {
         return this.run(() -> {
-            StorageIoWorker.Result result = this.results.get(pos);
+            // a pending vanilla write for this pos holds OLDER data: remove it so
+            // writeResult() can't later overwrite the raw bytes written here, and
+            // so reads stop being served from the stale in-map entry. Its future
+            // is completed because newer data for the chunk is now durable.
+            StorageIoWorker.Result result = this.results.remove(pos);
             try {
                 final RegionFile regionFile = ((IRegionBasedStorage) (Object) this.storage).invokeGetRegionFile(pos);
                 try (final DataOutputStream out = regionFile.getChunkOutputStream(pos)) {
@@ -40,6 +44,9 @@ public abstract class MixinStorageIoWorker implements IDirectStorage {
                 }
                 if (result != null) result.future.complete(null);
             } catch (IOException e) {
+                // raw write failed: restore the superseded entry so the old data
+                // still reaches disk rather than nothing at all
+                if (result != null) this.results.putIfAbsent(pos, result);
                 return Either.right(e);
             }
             return Either.left(null);

@@ -45,7 +45,10 @@ public class C2MEStorageVanillaInterface extends StorageIoWorker implements IDir
 
     @Override
     public void close() {
-        this.backend.close();
+        // vanilla StorageIoWorker.close() blocks until durable; match that contract.
+        // The backend is a daemon thread - without joining here, JVM exit during
+        // server shutdown can kill it mid-flush after the world reported saved.
+        this.backend.close().join();
     }
 
     @Override
