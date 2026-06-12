@@ -9,6 +9,8 @@ import net.minecraft.server.world.ChunkTicket;
 import net.minecraft.server.world.ChunkTicketManager;
 import net.minecraft.server.world.ThreadedAnvilChunkStorage;
 import net.minecraft.util.math.ChunkPos;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.threadly.concurrent.NoThreadScheduler;
 
 import java.util.ArrayList;
@@ -18,6 +20,8 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class NoTickSystem {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger("C2ME NoTickSystem");
 
     private final PlayerNoTickDistanceMap playerNoTickDistanceMap;
     private final NormalTicketDistanceMap normalTicketDistanceMap;
@@ -62,7 +66,7 @@ public class NoTickSystem {
     }
 
     public void tickScheduler() {
-        this.noThreadScheduler.tick(Throwable::printStackTrace);
+        this.noThreadScheduler.tick(t -> LOGGER.error("Error in no-tick scheduler task", t));
     }
 
     public void beforeTicketTicks() {
@@ -88,38 +92,48 @@ public class NoTickSystem {
                 }
             }
             executor.execute(() -> {
-                for (Runnable task : tasks) {
-                    try {
-                        task.run();
-                    } catch (Throwable t) {
-                        t.printStackTrace();
+                // any escape without resetting isTicking wedges the whole no-tick
+                // system permanently: ticket processing halts for the dimension and
+                // the pending-action queue grows without bound
+                boolean reschedule = false;
+                try {
+                    for (Runnable task : tasks) {
+                        try {
+                            task.run();
+                        } catch (Throwable t) {
+                            LOGGER.error("Error processing no-tick view distance action", t);
+                        }
                     }
-                }
 
-                boolean hasNoTickTicketUpdates;
-                if (pendingPurge) {
-                    this.normalTicketDistanceMap.purge(this.age);
-                    hasNoTickTicketUpdates = this.playerNoTickDistanceMap.runPendingTicketUpdates(tacs);
-                } else {
-                    hasNoTickTicketUpdates = false;
-                }
-
-                final boolean hasNormalTicketUpdates = this.normalTicketDistanceMap.update();
-                final boolean hasNoTickUpdates = this.playerNoTickDistanceMap.update();
-                if (hasNormalTicketUpdates || hasNoTickUpdates || hasNoTickTicketUpdates) {
-                    final LongSet noTickChunks = this.playerNoTickDistanceMap.getChunks();
-                    final LongSet normalChunks = this.normalTicketDistanceMap.getChunks();
-                    final LongOpenHashSet longs = new LongOpenHashSet(noTickChunks.size() * 3 / 2);
-                    final LongIterator iterator = noTickChunks.iterator();
-                    while (iterator.hasNext()) {
-                        final long chunk = iterator.nextLong();
-                        if (normalChunks.contains(chunk)) continue;
-                        longs.add(chunk);
+                    boolean hasNoTickTicketUpdates;
+                    if (pendingPurge) {
+                        this.normalTicketDistanceMap.purge(this.age);
+                        hasNoTickTicketUpdates = this.playerNoTickDistanceMap.runPendingTicketUpdates(tacs);
+                    } else {
+                        hasNoTickTicketUpdates = false;
                     }
-                    this.noTickOnlyChunksSnapshot = LongSets.unmodifiable(longs);
+
+                    final boolean hasNormalTicketUpdates = this.normalTicketDistanceMap.update();
+                    final boolean hasNoTickUpdates = this.playerNoTickDistanceMap.update();
+                    if (hasNormalTicketUpdates || hasNoTickUpdates || hasNoTickTicketUpdates) {
+                        final LongSet noTickChunks = this.playerNoTickDistanceMap.getChunks();
+                        final LongSet normalChunks = this.normalTicketDistanceMap.getChunks();
+                        final LongOpenHashSet longs = new LongOpenHashSet(noTickChunks.size() * 3 / 2);
+                        final LongIterator iterator = noTickChunks.iterator();
+                        while (iterator.hasNext()) {
+                            final long chunk = iterator.nextLong();
+                            if (normalChunks.contains(chunk)) continue;
+                            longs.add(chunk);
+                        }
+                        this.noTickOnlyChunksSnapshot = LongSets.unmodifiable(longs);
+                    }
+                    reschedule = hasNormalTicketUpdates || hasNoTickUpdates;
+                } catch (Throwable t) {
+                    LOGGER.error("Exception ticking no-tick view distance system", t);
+                } finally {
+                    this.isTicking.set(false);
                 }
-                this.isTicking.set(false);
-                if (hasNormalTicketUpdates || hasNoTickUpdates) scheduleTick(tacs); // run more tasks
+                if (reschedule) scheduleTick(tacs); // run more tasks
             });
         }
     }
@@ -130,7 +144,7 @@ public class NoTickSystem {
             try {
                 runnable.run();
             } catch (Throwable t) {
-                t.printStackTrace();
+                LOGGER.error("Error in no-tick main-thread task", t);
             }
         }
     }

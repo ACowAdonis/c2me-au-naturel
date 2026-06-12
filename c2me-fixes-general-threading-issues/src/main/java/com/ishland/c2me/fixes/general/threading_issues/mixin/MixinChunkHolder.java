@@ -92,11 +92,22 @@ public abstract class MixinChunkHolder {
             }
         } // C2ME fix: schedulingMutex is released here before acquiring synchronized(this)
 
-        CompletableFuture<Either<Chunk, ChunkHolder.Unloaded>> completableFuture2 = chunkStorage.getChunk((ChunkHolder) (Object) this, targetStatus);
-        // C2ME fix: Acquire synchronized(this) second (lock ordering: 2)
-        // CRITICAL: schedulingMutex must be released before this point to prevent deadlocks
-        synchronized (this) {
-            this.combineSavingFuture(completableFuture2, "schedule " + targetStatus);
+        // The placeholder is already published in futuresByStatus: if anything here
+        // throws before the whenComplete handler is wired, every later getChunkAt
+        // for this status returns a never-completing future (loads stall forever,
+        // CFUtil.join callers block, and the opts-chunk-access async_load ticket
+        // cleanup never runs - the region stays pinned loaded)
+        CompletableFuture<Either<Chunk, ChunkHolder.Unloaded>> completableFuture2;
+        try {
+            completableFuture2 = chunkStorage.getChunk((ChunkHolder) (Object) this, targetStatus);
+            // C2ME fix: Acquire synchronized(this) second (lock ordering: 2)
+            // CRITICAL: schedulingMutex must be released before this point to prevent deadlocks
+            synchronized (this) {
+                this.combineSavingFuture(completableFuture2, "schedule " + targetStatus);
+            }
+        } catch (Throwable t) {
+            future.completeExceptionally(t);
+            throw t;
         }
         completableFuture2.whenComplete((either, throwable) -> {
             if (throwable != null) {

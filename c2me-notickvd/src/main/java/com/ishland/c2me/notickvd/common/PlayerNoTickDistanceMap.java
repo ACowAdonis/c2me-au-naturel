@@ -7,9 +7,7 @@ import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
-import it.unimi.dsi.fastutil.objects.ObjectSet;
 import it.unimi.dsi.fastutil.objects.ReferenceArrayList;
-import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ChunkHolder;
 import net.minecraft.server.world.ChunkTicketManager;
 import net.minecraft.server.world.ChunkTicketType;
@@ -51,8 +49,11 @@ public class PlayerNoTickDistanceMap extends ChunkPosDistanceLevelPropagator {
 
     @Override
     protected int getInitialLevel(long chunkPos) {
-        final ObjectSet<ServerPlayerEntity> players = ((com.ishland.c2me.base.mixin.access.IChunkTicketManager) chunkTicketManager).getPlayersByChunkPos().get(chunkPos);
-        return players != null && !players.isEmpty() ? 249 - viewDistance : Integer.MAX_VALUE;
+        // sourceChunks is maintained by addSource/removeSource on this scheduler
+        // thread and mirrors exactly the player source set; reading the vanilla
+        // playersByChunkPos here raced main-thread rehashes (undefined results on
+        // an open-hash map)
+        return this.sourceChunks.contains(chunkPos) ? 249 - viewDistance : Integer.MAX_VALUE;
     }
 
     @Override
@@ -79,13 +80,15 @@ public class PlayerNoTickDistanceMap extends ChunkPosDistanceLevelPropagator {
     }
 
     public void addSource(ChunkPos chunkPos) {
-        this.updateLevel(chunkPos.toLong(), 249 - this.viewDistance, true);
+        // sourceChunks must reflect the change before propagation: the removal
+        // path's level recalculation consults getInitialLevel
         this.sourceChunks.add(chunkPos.toLong());
+        this.updateLevel(chunkPos.toLong(), 249 - this.viewDistance, true);
     }
 
     public void removeSource(ChunkPos chunkPos) {
-        this.updateLevel(chunkPos.toLong(), Integer.MAX_VALUE, false);
         this.sourceChunks.remove(chunkPos.toLong());
+        this.updateLevel(chunkPos.toLong(), Integer.MAX_VALUE, false);
     }
 
     public boolean update() {
@@ -210,16 +213,23 @@ public class PlayerNoTickDistanceMap extends ChunkPosDistanceLevelPropagator {
             if (hasUpdates) {
                 hasPendingTicketUpdatesAsync = true;
             }
-        }, this.noTickSystem.executor);
+        }, this.noTickSystem.executor).exceptionally(t -> {
+            // without this, a throw in the callback is silently swallowed by the
+            // CompletableFuture and the slot bookkeeping quietly degrades
+            LOGGER.error("Exception in no-tick chunk load callback for {}", pos, t);
+            return null;
+        });
         return future;
     }
 
     public void setViewDistance(int viewDistance) {
         this.viewDistance = MathHelper.clamp(viewDistance, 3, 249);
-        sourceChunks.forEach((long value) -> {
+        // iterate a copy: removeSource/addSource mutate sourceChunks, and fastutil
+        // forEach over a mutating open-hash set skips or double-visits entries
+        for (long value : sourceChunks.toLongArray()) {
             removeSource(new ChunkPos(value));
             addSource(new ChunkPos(value));
-        });
+        }
     }
 
     public int getPendingTicketUpdatesCount() {
