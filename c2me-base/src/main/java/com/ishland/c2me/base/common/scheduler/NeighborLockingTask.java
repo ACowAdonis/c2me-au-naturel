@@ -2,42 +2,38 @@ package com.ishland.c2me.base.common.scheduler;
 
 import com.google.common.base.Preconditions;
 import com.ishland.c2me.base.common.GlobalExecutors;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
 public class NeighborLockingTask<T> implements ScheduledTask {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger("C2ME/NeighborLockingTask");
-
     private final SchedulingManager schedulingManager;
-    private final long center;
     private final long[] names;
     private final BooleanSupplier isCancelled;
     private final Supplier<CompletableFuture<T>> action;
-    private final String desc;
-    private final boolean async;
     private final CompletableFuture<T> future = new CompletableFuture<>();
     private boolean acquired = false;
 
-    public NeighborLockingTask(SchedulingManager schedulingManager, long center, long[] names, BooleanSupplier isCancelled, Supplier<CompletableFuture<T>> action, String desc, boolean async) {
+    public NeighborLockingTask(SchedulingManager schedulingManager, long[] names, BooleanSupplier isCancelled, Supplier<CompletableFuture<T>> action) {
         this.schedulingManager = schedulingManager;
-        this.center = center;
         this.names = names;
         this.isCancelled = isCancelled;
         this.action = action;
-        this.desc = desc;
-        this.async = async;
 
         this.schedulingManager.enqueue(this);
     }
 
-
     @Override
     public boolean tryPrepare() {
+        if (this.isCancelled.getAsBoolean()) {
+            // holder downgraded/unloaded: don't acquire (2r+1)^2 locks and run a full
+            // generation nobody needs; consumers map CancellationException to UNLOADED_CHUNK
+            this.future.completeExceptionally(new CancellationException());
+            return false;
+        }
         final NeighborLockingManager lockingManager = this.schedulingManager.getNeighborLockingManager();
         for (long l : names) {
             if (lockingManager.isLocked(l)) {
@@ -53,37 +49,33 @@ public class NeighborLockingTask<T> implements ScheduledTask {
     }
 
     @Override
-    public void runTask(Runnable postAction) {
-        Preconditions.checkNotNull(postAction);
+    public void runTask() {
         if (!acquired) throw new IllegalStateException();
-        final CompletableFuture<T> future = this.action.get();
-        Preconditions.checkNotNull(future, "future");
+        final CompletableFuture<T> future;
+        try {
+            future = Preconditions.checkNotNull(this.action.get(), "future");
+        } catch (Throwable t) {
+            // a synchronous throw must not leak the acquired region locks or leave
+            // the chunk future incomplete (permanent generation deadlock for the area)
+            this.releaseLocks();
+            this.future.completeExceptionally(t);
+            return;
+        }
         future.handleAsync((result, throwable) -> {
-            this.schedulingManager.getExecutor().execute(() -> {
-                final NeighborLockingManager lockingManager = this.schedulingManager.getNeighborLockingManager();
-                for (long l : names) {
-                    lockingManager.releaseLock(l);
-                }
-            });
-            try {
-                postAction.run();
-            } catch (Throwable t) {
-                LOGGER.error("Error running post action", t);
-            }
+            this.releaseLocks();
             if (throwable != null) this.future.completeExceptionally(throwable);
             else this.future.complete(result);
             return null;
         }, GlobalExecutors.invokingExecutor);
     }
 
-    @Override
-    public long centerPos() {
-        return center;
-    }
-
-    @Override
-    public boolean isAsync() {
-        return async;
+    private void releaseLocks() {
+        this.schedulingManager.getExecutor().execute(() -> {
+            final NeighborLockingManager lockingManager = this.schedulingManager.getNeighborLockingManager();
+            for (long l : names) {
+                lockingManager.releaseLock(l);
+            }
+        });
     }
 
     public CompletableFuture<T> getFuture() {

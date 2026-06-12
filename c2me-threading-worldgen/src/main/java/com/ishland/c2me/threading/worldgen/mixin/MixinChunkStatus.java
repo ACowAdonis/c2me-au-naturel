@@ -131,8 +131,6 @@ public abstract class MixinChunkStatus implements IChunkStatus {
                                 holder,
                                 lockRadius,
                                 ((IVanillaChunkManager) tacs).c2me$getSchedulingManager(),
-                        (Object) this == ChunkStatus.LIGHT, // lighting is async so don't hold the slot TODO make this check less dirty
-                                ((IWorldGenLockable) world).getWorldGenChunkLock(),
                                 () -> ChunkStatusUtils.getThreadingType(thiz).runTask(((IWorldGenLockable) world).getWorldGenSingleThreadedLock(), generationTask))
                         .exceptionally(t -> {
                             Throwable actual = t;

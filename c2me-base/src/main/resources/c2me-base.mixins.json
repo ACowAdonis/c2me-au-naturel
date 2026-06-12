@@ -38,7 +38,6 @@
     "access.IXoroshiro128PlusPlusRandom",
     "access.IXoroshiro128PlusPlusRandomDeriver",
     "access.IXoroshiro128PlusPlusRandomImpl",
-    "priority.MixinServerChunkManager",
     "profiling.MixinChunkHolder",
     "profiling.MixinJfrProfiler",
     "scheduler.MixinThreadedAnvilChunkStorage",

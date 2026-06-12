@@ -2,7 +2,6 @@ package com.ishland.c2me.threading.worldgen.common;
 
 import com.google.common.base.Preconditions;
 import com.ibm.asyncutil.locks.AsyncLock;
-import com.ibm.asyncutil.locks.AsyncNamedLock;
 import com.ishland.c2me.base.common.GlobalExecutors;
 import com.ishland.c2me.base.common.scheduler.NeighborLockingTask;
 import com.ishland.c2me.base.common.scheduler.SchedulingManager;
@@ -49,10 +48,8 @@ public class ChunkStatusUtils {
         return AS_IS;
     }
 
-    public static <T> CompletableFuture<T> runChunkGenWithLock(ChunkPos target, ChunkStatus status, ChunkHolder holder, int radius, SchedulingManager schedulingManager, boolean async, AsyncNamedLock<ChunkPos> chunkLock, Supplier<CompletableFuture<T>> action) {
+    public static <T> CompletableFuture<T> runChunkGenWithLock(ChunkPos target, ChunkStatus status, ChunkHolder holder, int radius, SchedulingManager schedulingManager, Supplier<CompletableFuture<T>> action) {
         Preconditions.checkNotNull(status);
-//        if (radius == 0)
-//            return StageSupport.tryWith(chunkLock.acquireLock(target), unused -> action.get()).toCompletableFuture().thenCompose(Function.identity());
 
         BooleanSupplier isCancelled;
 
@@ -72,12 +69,9 @@ public class ChunkStatusUtils {
 
         final NeighborLockingTask<T> task = new NeighborLockingTask<>(
                 schedulingManager,
-                target.toLong(),
                 lockTargets,
                 isCancelled,
-                action,
-                "%s %s".formatted(target.toString(), status.toString()),
-                async
+                action
         );
         return task.getFuture();
     }
